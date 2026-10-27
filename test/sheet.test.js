@@ -64,10 +64,16 @@ test('features, homebrew item and actions', () => {
   const dagger = s.actions.find((a) => a.name === 'Dagger');
   assert.equal(dagger.hit, '+2');
   assert.equal(dagger.damage, '1d4 piercing');
-  assert.ok(!s.actions.some((a) => a.name === 'Friends'), 'utility cantrips are not attacks');
-  assert.ok(!s.actions.some((a) => a.name === 'Shatter' || a.name === 'Ice Knife'), 'leveled action spells stay in the Spells tab');
-  assert.ok(s.actions.some((a) => a.name === 'Misty Step' && a.group === 'Bonus actions'), 'bonus action spells still listed');
-  assert.ok(s.actions.some((a) => a.name === 'Fire Bolt' && a.group === 'Attacks'));
+  const by = (n) => s.actions.find((a) => a.name === n);
+  assert.equal(by('Friends').shown, false, 'utility cantrips are hidden by default');
+  assert.equal(by('Shatter').shown, false, 'leveled action spells are hidden by default (Spells tab)');
+  assert.equal(by('Shatter').group, 'Spells');
+  assert.equal(by('Misty Step').shown, true);
+  assert.equal(by('Misty Step').group, 'Bonus actions');
+  assert.equal(by('Fire Bolt').shown, true);
+  assert.equal(by('Circle Spell: Augment').shown, false);
+  const keys = s.actions.map((a) => a.key);
+  assert.equal(new Set(keys).size, keys.length, 'every action has its own key');
 });
 
 test('wild magic surge table and 2024 rule', () => {

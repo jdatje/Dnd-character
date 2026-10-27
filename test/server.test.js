@@ -27,6 +27,13 @@ const stub = http.createServer((req, res) => {
       return json(401, { message: 'no' });
     }
     if (req.method === 'GET' && req.url.startsWith('/character/v5/character/157221719')) return json(200, ddb.char);
+    if (req.method === 'GET' && req.url.startsWith('/character/v5/character/24242424')) {
+      const other = JSON.parse(JSON.stringify(fixture));
+      other.data.id = 24242424;
+      other.data.name = 'Brindle Oakhart';
+      other.data.inventory = other.data.inventory.filter((i) => !/Quill/.test(i.definition.name));
+      return json(200, other);
+    }
     if (req.method === 'GET') return json(404, { success: false });
     if (req.method === 'PUT') {
       if (req.headers.authorization !== `Bearer ${ddb.token}`) return json(401, { success: false, message: 'auth' });
@@ -172,4 +179,45 @@ test('bad requests get plain messages', async () => {
   assert.equal(r.status, 400);
   r = await call('/api/nothing', {});
   assert.equal(r.status, 404);
+});
+
+test('more characters: add, switch, own trackers, remove', async () => {
+  let r = await call('/api/load', { url: 'https://www.dndbeyond.com/characters/24242424/abc' });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.added, true);
+  let st = (await call('/api/state')).data;
+  assert.equal(st.active, '24242424');
+  assert.deepEqual(st.characters.map((c) => c.name), ['Volo Gerddam', 'Brindle Oakhart']);
+  assert.deepEqual(st.custom, [], 'a new character has no trackers of its own yet');
+  assert.deepEqual(st.settings.quotes, []);
+  const sh = (await call('/api/sheet')).data;
+  assert.equal(sh.sheet.name, 'Brindle Oakhart');
+  assert.match(sh.sheetKey, /^24242424:/);
+
+  // a change on Brindle does not touch Volo
+  await act('hp/damage', { amount: 3 });
+  const pin = sh.sheet.actions.find((a) => a.name === 'Shatter');
+  await act('action/pin', { key: pin.key, show: true });
+  st = (await call('/api/state')).data;
+  assert.equal(st.actionPins[pin.key], true);
+  await act('char/switch', { id: '157221719' });
+  st = (await call('/api/state')).data;
+  assert.equal(st.active, '157221719');
+  assert.deepEqual(st.actionPins, {});
+  assert.ok(st.custom.some((c) => c.id === 'spark'));
+  assert.equal((await call('/api/sheet')).data.sheet.name, 'Volo Gerddam');
+
+  // style is shared
+  await act('settings/set', { theme: 'feywild' });
+  await act('char/switch', { id: '24242424' });
+  st = (await call('/api/state')).data;
+  assert.equal(st.settings.theme, 'feywild');
+
+  r = await act('char/remove', { id: '24242424' });
+  assert.equal(r.status, 200);
+  st = (await call('/api/state')).data;
+  assert.equal(st.active, '157221719');
+  assert.equal(st.characters.length, 1);
+  const res = await fetch(`${base}/avatar?id=24242424`);
+  assert.equal(res.status, 404);
 });

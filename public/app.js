@@ -52,7 +52,7 @@
 
   let S = LS.get('state', null);
   let SHEET = LS.get('sheet', null);
-  let sheetRev = SHEET ? LS.get('sheetRev', -1) : -1;
+  let sheetKey = SHEET ? LS.get('sheetKey', '') : '';
   let offline = false;
   const UI = { tab: LS.get('tab', 'actions'), other: LS.get('other', null), q: LS.get('q', 0), otherOpen: false, end: null };
   if (!['actions', 'spells', 'checks', 'features', 'other'].includes(UI.tab)) UI.tab = 'actions';
@@ -99,12 +99,12 @@
         checkVersion(st.v);
         S = st;
         LS.set('state', S);
-        if (S.hasSheet && S.sheetRev !== sheetRev) {
+        if (S.hasSheet && S.sheetKey !== sheetKey) {
           const sh = await api('/api/sheet');
           SHEET = sh.sheet;
-          sheetRev = sh.sheetRev;
+          sheetKey = sh.sheetKey;
           LS.set('sheet', SHEET);
-          LS.set('sheetRev', sheetRev);
+          LS.set('sheetKey', sheetKey);
         }
         if (!S.hasSheet) SHEET = null;
         render();
@@ -157,7 +157,7 @@
       try {
         const d = JSON.parse(e.data);
         if (d.v) checkVersion(d.v);
-        if (!S || d.rev !== S.rev || d.sheetRev !== sheetRev) refresh();
+        if (!S || d.rev !== S.rev || d.sheetKey !== sheetKey) refresh();
       } catch (err) { /* ignore */ }
     });
     es.onerror = () => setOffline(true);
@@ -240,8 +240,11 @@
     const q = quotes.length ? quotes[UI.q % quotes.length] : '';
     h.innerHTML = `
       <div class="hdr-top">
-        <img class="portrait" src="/avatar?v=${sheetRev}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'portrait',textContent:'${esc(SHEET.name[0] || '?')}'}))">
-        <div class="hdr-name">${esc(SHEET.name)}</div>
+        <button type="button" class="hdr-who" data-a="chars" aria-label="${esc(SHEET.name)}: switch or add a character">
+          ${avatarImg(S.active, SHEET.name, 'portrait')}
+          <span class="hdr-name">${esc(SHEET.name)}</span>
+          ${(S.characters || []).length > 1 ? '<svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>' : ''}
+        </button>
         <button type="button" class="icon-btn${live.inspiration ? ' on' : ''}" data-a="insp" aria-pressed="${live.inspiration}" aria-label="Heroic inspiration">${ICON.star}</button>
         <button type="button" class="icon-btn" data-a="go-notes" aria-label="Notes">${ICON.notes}</button>
         <button type="button" class="icon-btn" data-a="settings" aria-label="Settings">${ICON.gear}</button>
@@ -256,6 +259,11 @@
         <div class="stat"><span class="lbl">INIT</span><span class="val">${esc(SHEET.initiativeText)}</span></div>
       </div>
       ${st.showQuote && q ? `<div class="quote"><p>“${esc(q)}”</p>${quotes.length > 1 ? `<button type="button" class="icon-btn plain" data-a="quote" aria-label="Another line">${ICON.shuffle}</button>` : ''}</div>` : ''}`;
+  }
+
+  function avatarImg(id, name, cls) {
+    const letter = esc(String(name || '?').trim()[0] || '?');
+    return `<img class="${cls}" src="/avatar?id=${esc(id)}&v=${encodeURIComponent(sheetKey)}" alt="" onerror="this.replaceWith(Object.assign(document.createElement('div'),{className:'${cls}',textContent:'${letter}'}))">`;
   }
 
   /* ---------- tabs ---------- */
@@ -290,7 +298,12 @@
 
   function actionRow(a) {
     const u = a.useKey && useOf(a.useKey);
-    const right = u ? pips('use', u.key, u.max, usedOf(u.key), { box: true, sm: true }) : esc(a.damage || '');
+    let right = esc(a.damage || '');
+    if (u) {
+      right = u.max > 3
+        ? `<span class="usecount">${u.max - usedOf(u.key)}<span> / ${u.max}</span></span>`
+        : pips('use', u.key, u.max, usedOf(u.key), { box: true, sm: true });
+    }
     return `<div class="arow">
       <button type="button" class="a-main" data-a="detail" data-kind="action" data-i="${a.i}">
         <span class="name">${esc(a.name)}</span><span class="meta">${esc(a.meta)}</span>
@@ -300,14 +313,20 @@
     </div>`;
   }
 
+  /** Is this action in the Actions list? The player's choice, else the default from the sheet. */
+  function isShown(a) {
+    const pins = (S && S.actionPins) || {};
+    return Object.prototype.hasOwnProperty.call(pins, a.key) ? pins[a.key] : a.shown;
+  }
+
   function renderActions() {
     const groups = {};
     SHEET.actions.forEach((a, i) => {
-      const g = ['Attacks', 'Bonus actions', 'Reactions'].includes(a.group) ? a.group : 'More';
+      const g = isShown(a) ? a.group : 'More';
       (groups[g] = groups[g] || []).push({ ...a, i });
     });
     let h = '';
-    for (const g of ['Attacks', 'Bonus actions', 'Reactions', 'More']) {
+    for (const g of ['Attacks', 'Actions', 'Spells', 'Bonus actions', 'Reactions', 'Other', 'More']) {
       const list = groups[g];
       if (!list) continue;
       const collapsed = g === 'More' && !UI.otherOpen;
@@ -317,7 +336,17 @@
         : `<div class="sec-h"><h2>${esc(g)}</h2></div>`;
       h += `<section class="sec">${head}${rows}</section>`;
     }
-    return `<div class="pane">${h || '<p class="empty">No actions on this sheet.</p>'}</div>`;
+    const hint = (S.actionPins && Object.keys(S.actionPins).length) ? '' : '<p class="hint" style="margin:0;text-align:center">Tap any action or spell to show it here or hide it.</p>';
+    return `<div class="pane">${h || '<p class="empty">No actions on this sheet.</p>'}${h ? hint : ''}</div>`;
+  }
+
+  function pinBar(actionIndex) {
+    const a = SHEET.actions[actionIndex];
+    if (!a) return '';
+    const shown = isShown(a);
+    return `<div class="pinbar">
+      <button type="button" class="btn ${shown ? '' : 'outline'}" data-a="pin" data-i="${actionIndex}" data-show="${shown ? 0 : 1}">${shown ? 'Hide from Actions' : 'Show in Actions'}</button>
+    </div>`;
   }
 
   function spellMeta(s) {
@@ -818,12 +847,15 @@
 
   /* ---------- dialogs ---------- */
   function showDetail(kind, i) {
+    UI.detail = { kind, i };
     if (kind === 'spell') {
       const s = SHEET.spells[i];
+      const ai = SHEET.actions.findIndex((a) => a.spellKey === s.key);
       const facts = [s.castTime, s.range, s.duration, s.components, s.hit, s.damage].filter(Boolean).join(' · ');
       openSheet(s.name, `${s.level === 0 ? 'Cantrip' : `${ord(s.level)} level`} ${s.school}${s.ritual ? ' · ritual' : ''}`, `
         <p class="hint" style="margin:0">${esc(facts)}</p>
         ${s.level > 0 ? `<div class="btns"><button type="button" class="btn primary" data-a="cast" data-i="${i}">Cast ${esc(s.name)}</button></div>` : ''}
+        ${ai >= 0 ? pinBar(ai) : ''}
         <div class="rich">${s.html}</div>`);
       return;
     }
@@ -835,7 +867,8 @@
       }
       const u = a.useKey && useOf(a.useKey);
       openSheet(a.name, a.meta, `${a.hit || a.damage ? `<p class="hint" style="margin:0">${esc([a.hit && `Hit ${a.hit}`, a.damage].filter(Boolean).join(' · '))}</p>` : ''}
-        ${u ? `<div style="display:flex;gap:.6rem;align-items:center"><span class="lab">Uses</span>${pips('use', u.key, u.max, usedOf(u.key), { box: true })}</div>` : ''}
+        ${u ? `<div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap"><span class="lab">Uses</span>${pips('use', u.key, u.max, usedOf(u.key), { box: true })}</div>` : ''}
+        ${pinBar(i)}
         <div class="rich">${a.html || '<p class="muted">No description.</p>'}</div>`);
       return;
     }
@@ -849,6 +882,19 @@
       const it = SHEET.inventory[i];
       openSheet(it.name, [it.type, it.rarity, it.qty > 1 ? `×${it.qty}` : '', it.weight ? `${it.weight} lb` : ''].filter(Boolean).join(' · '), `<div class="rich">${it.html || '<p class="muted">No description.</p>'}</div>`);
     }
+  }
+
+  function charsDialog() {
+    const list = (S.characters || []).map((c) => `<button type="button" class="charrow" data-a="char-switch" data-id="${esc(c.id)}">
+        ${avatarImg(c.id, c.name, 'ph')}
+        <span class="t"><b>${esc(c.name)}</b><span>${esc(c.classLine)}</span></span>
+        ${c.id === S.active ? '<span class="tag acc">Playing</span>' : ''}
+      </button>`).join('');
+    openSheet('Characters', 'Tap to switch. Each has its own trackers and notes.', `
+      <div>${list}</div>
+      <div class="field"><label for="add-url-sheet">Add a character (D&amp;D Beyond link, set to Public)</label>
+        <input id="add-url-sheet" class="input" type="url" placeholder="https://www.dndbeyond.com/characters/..."></div>
+      <button type="button" class="btn primary" data-a="char-add" data-from="sheet" data-label="Add character">Add character</button>`);
   }
 
   function castDialog(i) {
@@ -1005,14 +1051,26 @@
           <div class="setrow"><span class="t">In-character line<small>Shown under your name</small></span><button type="button" class="switch" role="switch" aria-checked="${st.showQuote}" data-a="toggle-quote" aria-label="Show in-character line"><i></i></button></div>
           <div class="setrow"><span class="t">Keep screen on<small>While the app is open (this device)</small></span><button type="button" class="switch" role="switch" aria-checked="${wake}" data-a="toggle-wake" aria-label="Keep screen on"><i></i></button></div>
         </section>
-        <section class="sec"><div class="sec-h"><h2><label for="quotes">In-character lines</label></h2><span class="side">one per line</span></div>
+        <section class="sec"><div class="sec-h"><h2>Characters</h2><span class="side">${(S.characters || []).length}</span></div>
+          <div class="card" style="padding:0 .9rem">
+            ${(S.characters || []).map((c, i, all) => `<div class="charrow">
+              ${avatarImg(c.id, c.name, 'ph')}
+              <span class="t"><b>${esc(c.name)}</b><span>${esc(c.classLine)}</span></span>
+              ${c.id === S.active ? '<span class="tag acc">Playing</span>' : `<button type="button" class="btn small" data-a="char-switch" data-id="${esc(c.id)}">Play</button>`}
+              ${all.length > 1 ? `<button type="button" class="icon-btn plain" data-a="char-move" data-id="${esc(c.id)}" data-dir="up" aria-label="Move ${esc(c.name)} up" ${i === 0 ? 'disabled' : ''}>↑</button>` : ''}
+              <button type="button" class="icon-btn plain" data-a="char-remove" data-id="${esc(c.id)}" aria-label="Remove ${esc(c.name)}">${ICON.close}</button>
+            </div>`).join('')}
+          </div>
+          <div class="field"><label for="add-url">Add a character (D&amp;D Beyond link, set to Public)</label><input id="add-url" class="input" type="url" placeholder="https://www.dndbeyond.com/characters/..."></div>
+          <button type="button" class="btn outline" data-a="char-add" data-label="Add character">Add character</button>
+          <p class="hint" style="margin:0">Each character has its own trackers, notes, in-character lines and Actions list. Style and size are shared.</p></section>
+        <section class="sec"><div class="sec-h"><h2><label for="quotes">In-character lines${SHEET ? ` · ${esc(SHEET.name)}` : ''}</label></h2><span class="side">one per line</span></div>
           <textarea id="quotes" class="input" rows="5">${esc((st.quotes || []).join('\n'))}</textarea>
           <button type="button" class="btn" data-a="save-quotes">Save lines</button></section>
         <section class="sec"><div class="sec-h"><h2>D&amp;D Beyond</h2></div>
           <div class="card" style="padding:.9rem;display:flex;flex-direction:column;gap:.7rem">
-            <div class="field"><label for="ddb-url">Character link</label><input id="ddb-url" class="input" type="url" value="${esc(st.characterUrl)}"></div>
-            <button type="button" class="btn outline" data-a="load">Load sheet from D&amp;D Beyond</button>
-            <p class="hint" style="margin:0">Last loaded: ${esc(loaded)}. Load at the start of the night, or after you change your character on D&amp;D Beyond.</p>
+            ${SHEET ? `<button type="button" class="btn outline" data-a="load" data-label="Reload ${esc(SHEET.name)} from D&amp;D Beyond">Reload ${esc(SHEET.name)} from D&amp;D Beyond</button>
+            <p class="hint" style="margin:0">Last loaded: ${esc(loaded)}. Reload at the start of the night, or after you change your character on D&amp;D Beyond.</p>` : ''}
             <hr style="border:none;border-top:1px solid var(--line);margin:.2rem 0;width:100%">
             <b style="font-size:.92rem">Send changes back (login cookie)</b>
             ${authBlock}
@@ -1104,7 +1162,59 @@
     const d = el.dataset;
     switch (a) {
       case 'pip': return tapPip(el);
-      case 'insp': return act('inspiration/set', { on: !L().inspiration });
+      case 'insp': {
+        const on = !L().inspiration;
+        await act('inspiration/set', { on });
+        return toast(on ? 'Heroic Inspiration: you have it' : 'Heroic Inspiration used');
+      }
+      case 'pin': {
+        const a = SHEET.actions[Number(d.i)];
+        if (!a) return undefined;
+        const show = d.show === '1';
+        try {
+          await act('action/pin', { key: a.key, show: show === a.shown ? null : show });
+          if (UI.detail && sheetIsOpen()) showDetail(UI.detail.kind, UI.detail.i);
+          toast(show ? `${a.name} is in your Actions` : `${a.name} moved to More actions`);
+        } catch (err) { /* toast shown */ }
+        return undefined;
+      }
+      case 'chars': return charsDialog();
+      case 'char-switch':
+        if (d.id === S.active) return closeTop();
+        try {
+          if (NOTE.dirty) await saveNote();
+          await act('char/switch', { id: d.id });
+          UI.q = 0;
+          if (sheetIsOpen()) closeTop();
+          if (pageName === 'settings') host().innerHTML = renderSettings();
+          toast(`Now playing ${(S.characters.find((c) => c.id === d.id) || {}).name || 'that character'}`);
+        } catch (err) { /* toast shown */ }
+        return undefined;
+      case 'char-move':
+        await act('char/move', { id: d.id, dir: d.dir });
+        if (pageName === 'settings') host().innerHTML = renderSettings();
+        return undefined;
+      case 'char-remove': {
+        const c = S.characters.find((x) => x.id === d.id);
+        return openSheet(`Remove ${c ? c.name : 'character'}?`, 'From this app only. Nothing changes on D&D Beyond.', `
+          <p class="hint" style="margin:0">Its trackers, notes and settings in this app are deleted. You can add it again later with its link.</p>
+          <button type="button" class="btn danger" data-a="char-remove-go" data-id="${esc(d.id)}">Remove</button>
+          <button type="button" class="btn" data-a="sheet-close">Cancel</button>`);
+      }
+      case 'char-remove-go':
+        try {
+          await act('char/remove', { id: d.id });
+          closeTop();
+          if (pageName === 'settings') setTimeout(() => (host().innerHTML = renderSettings()), 60);
+          toast('Character removed');
+        } catch (err) { /* toast shown */ }
+        return undefined;
+      case 'char-add': {
+        const input = $(d.from === 'sheet' ? '#add-url-sheet' : '#add-url');
+        const url = input ? input.value.trim() : '';
+        if (!url) return toast('Paste the link of the character first.');
+        return loadSheet(url, false, el);
+      }
       case 'quote':
         UI.q += 1;
         LS.set('q', UI.q);
@@ -1276,10 +1386,9 @@
         await act('settings/set', { acOverride: $('#ac').value === '' ? null : Number($('#ac').value) });
         return toast('Saved');
       case 'first-load':
-      case 'load': {
-        const url = $(a === 'first-load' ? '#first-url' : '#ddb-url').value.trim();
-        return loadSheet(url, false, el);
-      }
+        return loadSheet($('#first-url').value.trim(), false, el);
+      case 'load':
+        return loadSheet(S.settings.characterUrl, false, el);
       case 'load-force':
         closeTop();
         return loadSheet(d.url, true, null);
@@ -1321,10 +1430,11 @@
       const r = await api('/api/load', { url, force });
       await refresh();
       if (pageName === 'settings') host().innerHTML = renderSettings();
-      toast(`${r.name} loaded`);
+      if (sheetIsOpen() && $('#add-url-sheet')) closeTop();
+      toast(r.added ? `${r.name} added` : `${r.name} loaded`);
     } catch (e) {
       if (e.status === 409 && e.data && e.data.pending) {
-        openSheet('Load the sheet anyway?', 'You have changes that are not on D&D Beyond yet', `
+        openSheet(`Load ${e.data.name || 'the sheet'} anyway?`, 'There are changes that are not on D&D Beyond yet', `
           <div class="card" style="padding:.4rem .9rem">${e.data.pending.map((p) => `<div class="li"><span class="n"><b>${esc(p.label)}</b><br><span class="hint">${esc(p.text)}</span></span></div>`).join('')}</div>
           <p class="hint" style="margin:0">Loading replaces them with what D&amp;D Beyond has. Use End night first to send them.</p>
           <button type="button" class="btn danger" data-a="load-force" data-url="${esc(url)}">Load and lose these changes</button>
@@ -1333,7 +1443,7 @@
     }
     if (btn && btn.isConnected) {
       btn.disabled = false;
-      btn.textContent = 'Load sheet from D&D Beyond';
+      btn.textContent = btn.dataset.label || 'Load from D&D Beyond';
     }
   }
 

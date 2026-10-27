@@ -9,8 +9,9 @@ const fixture = require('./fixtures/character.json');
 const sheet = buildSheet(fixture);
 const key = (re) => sheet.uses.find((u) => re.test(u.name)).key;
 function fresh() {
-  const st = S.normalize(null);
+  const st = S.newChar('157221719');
   S.applyLoad(st, sheet);
+  S.starterFor(st, sheet);
   return st;
 }
 
@@ -153,12 +154,54 @@ test('notes: add, switch, clean HTML, delete', () => {
 
 test('settings are checked', () => {
   const st = fresh();
-  S.apply(st, sheet, 'settings/set', { theme: 'ember', size: 112, quotes: ['a', '', ' b '] });
-  assert.equal(st.settings.theme, 'ember');
-  assert.equal(st.settings.size, 110);
+  S.apply(st, sheet, 'settings/set', { quotes: ['a', '', ' b '] });
   assert.deepEqual(st.settings.quotes, ['a', 'b']);
-  assert.throws(() => S.apply(st, sheet, 'settings/set', { theme: 'pink' }), /style/);
-  assert.throws(() => S.apply(st, sheet, 'settings/set', { size: 300 }), /Size/);
+  const root = S.normalize(null);
+  S.applyLook(root, { theme: 'ember', size: 112 });
+  assert.equal(root.look.theme, 'ember');
+  assert.equal(root.look.size, 110);
+  assert.throws(() => S.applyLook(root, { theme: 'pink' }), /style/);
+  assert.throws(() => S.applyLook(root, { size: 300 }), /Size/);
+});
+
+test('Volo starts with his line and the quill tracker', () => {
+  const st = fresh();
+  assert.equal(st.settings.quotes.length, 1);
+  assert.equal(st.custom[0].id, 'spark');
+  const other = S.newChar('42424242');
+  S.starterFor(other, { ...sheet, inventory: [] });
+  assert.deepEqual(other.settings.quotes, []);
+  assert.deepEqual(other.custom, []);
+});
+
+test('show and hide actions', () => {
+  const st = fresh();
+  const shatter = sheet.actions.find((a) => a.name === 'Shatter');
+  S.apply(st, sheet, 'action/pin', { key: shatter.key, show: true });
+  assert.equal(st.actionPins[shatter.key], true);
+  S.apply(st, sheet, 'action/pin', { key: shatter.key, show: null });
+  assert.ok(!(shatter.key in st.actionPins), 'back to the default');
+  assert.throws(() => S.apply(st, sheet, 'action/pin', { key: 'nope', show: true }), /not on your sheet/);
+});
+
+test('version 1 state moves into the first character', () => {
+  const v1 = {
+    v: 1, rev: 7,
+    settings: { characterUrl: 'https://www.dndbeyond.com/characters/157221719', theme: 'ember', size: 110, showQuote: false, handleSide: 'right', acOverride: 12, quotes: ['hi'] },
+    sheetRev: 3, baseline: { removed: 1 }, live: { removed: 2 }, custom: [{ id: 'spark', name: 'x', max: 2, used: 1, reset: 'long' }],
+    notes: [{ id: 'abc123', title: 'N', html: 'x' }], activeNote: 'abc123', surge: { check: null, table: null, log: [] }, lastSync: null, loadedAt: 5,
+  };
+  const root = S.normalize(v1);
+  assert.equal(root.v, 2);
+  assert.equal(root.active, '157221719');
+  assert.deepEqual(root.look, { theme: 'ember', size: 110, showQuote: false });
+  const c = root.chars['157221719'];
+  assert.equal(c.settings.acOverride, 12);
+  assert.deepEqual(c.settings.quotes, ['hi']);
+  assert.equal(c.live.removed, 2);
+  assert.equal(c.notes[0].title, 'N');
+  assert.equal(c.custom[0].used, 1);
+  assert.deepEqual(S.normalize(root), root, 'normalizing again changes nothing');
 });
 
 test('descriptions from D&D Beyond are made safe', () => {

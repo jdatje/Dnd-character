@@ -31,11 +31,12 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html { font-size: 16px; background: var(--bg); }
+html { font-size: 16px; background: var(--bg); height: 100%; overflow: hidden; }
 body {
   margin: 0; background: var(--bg); color: var(--text);
   font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; font-size: 1rem; line-height: 1.4;
   overscroll-behavior: none;
+  height: 100%; overflow: hidden;
 }
 button, input, textarea, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
@@ -46,7 +47,8 @@ h1, h2, h3, h4 { margin: 0; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* layout: header, scrolling main, tab bar */
-#app { display: flex; flex-direction: column; height: 100dvh; max-width: 40rem; margin: 0 auto; position: relative; overflow: hidden; }
+/* the app is pinned to the screen: only the middle part scrolls, header and tab bar never move */
+#app { position: fixed; top: 0; bottom: 0; left: 0; right: 0; display: flex; flex-direction: column; max-width: 40rem; margin: 0 auto; overflow: hidden; }
 #hdr { flex: none; padding: .75rem 1rem .6rem; background: var(--header); border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: .6rem; padding-top: calc(.75rem + env(safe-area-inset-top)); }
 .hdr-top { display: flex; align-items: center; gap: .45rem; }
 .hdr-top .icon-btn { width: 2.6rem; height: 2.75rem; }
@@ -309,3 +311,17 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 2.75rem; }
 @media (prefers-reduced-motion: reduce) {
   #drawer, #sheet, .scrim, #toast { transition: none; }
 }
+
+.usecount { font-size: .9rem; font-weight: 700; color: var(--hp); white-space: nowrap; }
+.usecount span { color: var(--muted); font-weight: 500; }
+.pinbar { display: flex; gap: .5rem; flex-wrap: wrap; }
+.pinbar .btn { flex: 1; }
+.hdr-who { all: unset; flex: 1; min-width: 0; display: flex; align-items: center; gap: .55rem; cursor: pointer; }
+.hdr-who .chev { width: 1rem; height: 1rem; color: var(--muted); flex: none; }
+.charrow { display: flex; align-items: center; gap: .7rem; min-height: 3.6rem; border-top: 1px solid var(--line2); padding: .3rem 0; }
+.charrow:first-child { border-top: none; }
+.charrow img, .charrow .ph { width: 2.6rem; height: 2.6rem; border-radius: 50%; object-fit: cover; background: var(--surface2); flex: none; display: flex; align-items: center; justify-content: center; font-weight: 700; color: var(--muted); }
+.charrow .t { flex: 1; min-width: 0; }
+.charrow .t b { display: block; font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.charrow .t span { font-size: .78rem; color: var(--muted); }
+button.charrow { all: unset; display: flex; align-items: center; gap: .7rem; min-height: 3.6rem; width: 100%; cursor: pointer; border-top: 1px solid var(--line2); }

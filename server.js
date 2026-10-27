@@ -3,7 +3,11 @@
  * Character app server. No dependencies: Node 24 only.
  *
  *   PORT       (default 3200)
- *   DATA_DIR   (default ./data) state.json, character.json (last sheet from D&D Beyond), ddb-auth.json (login cookie)
+ *   DATA_DIR   (default ./data)
+ *       state.json            every character's trackers, notes and settings (see lib/state.js)
+ *       chars/<id>.json       the last sheet D&D Beyond gave for that character
+ *       chars/<id>.img(.json) its portrait
+ *       ddb-auth.json         the D&D Beyond login cookie (for sending changes back)
  */
 const http = require('http');
 const fs = require('fs');
@@ -16,13 +20,11 @@ const ddb = require('./lib/ddb');
 const PORT = Number(process.env.PORT) || 3200;
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const PUBLIC = path.join(__dirname, 'public');
-const FILES = {
-  state: path.join(DATA_DIR, 'state.json'),
-  raw: path.join(DATA_DIR, 'character.json'),
-  auth: path.join(DATA_DIR, 'ddb-auth.json'),
-  avatar: path.join(DATA_DIR, 'avatar.img'),
-};
-fs.mkdirSync(DATA_DIR, { recursive: true });
+const CHARS = path.join(DATA_DIR, 'chars');
+const FILES = { state: path.join(DATA_DIR, 'state.json'), auth: path.join(DATA_DIR, 'ddb-auth.json') };
+const rawFile = (id) => path.join(CHARS, `${id}.json`);
+const imgFile = (id) => path.join(CHARS, `${id}.img`);
+fs.mkdirSync(CHARS, { recursive: true });
 
 // version of the phone app: changes whenever an update changes its files, so open phones know to reload
 const VERSION = (() => {
@@ -48,15 +50,54 @@ async function writeJson(file, data, mode) {
   await fsp.rename(tmp, file);
 }
 
-let state = S.normalize(readJson(FILES.state, null));
-let sheet = null;
-const raw = readJson(FILES.raw, null);
-if (raw) {
+const stored = readJson(FILES.state, null);
+if (stored && stored.v !== 2) {
+  // first start after the multi-character update: keep a copy of the old data, just in case
   try {
-    sheet = buildSheet(raw, { fetchedAt: state.loadedAt || Date.now() });
-    if (!state.live) S.applyLoad(state, sheet);
-  } catch (e) {
-    console.error('Stored sheet could not be read:', e.message);
+    fs.copyFileSync(FILES.state, path.join(DATA_DIR, 'state-v1-backup.json'));
+  } catch (e) { /* best effort */ }
+}
+let state = S.normalize(stored);
+
+// version 1 kept one character in character.json and avatar.img: move them next to the others
+(() => {
+  const id = state.active;
+  const old = path.join(DATA_DIR, 'character.json');
+  if (!id || !fs.existsSync(old) || fs.existsSync(rawFile(id))) return;
+  fs.renameSync(old, rawFile(id));
+  for (const ext of ['', '.json']) {
+    const a = path.join(DATA_DIR, `avatar.img${ext}`);
+    if (fs.existsSync(a)) fs.renameSync(a, `${imgFile(id)}${ext}`);
+  }
+  fs.writeFileSync(FILES.state, JSON.stringify(state));
+  console.log(`Moved the stored character ${id} to the new layout.`);
+})();
+
+const sheets = new Map(); // id -> sheet, read from chars/<id>.json when first needed
+function sheetOf(id) {
+  if (!id) return null;
+  if (sheets.has(id)) return sheets.get(id);
+  const raw = readJson(rawFile(id), null);
+  let sh = null;
+  if (raw) {
+    try {
+      sh = buildSheet(raw, { fetchedAt: (state.chars[id] && state.chars[id].loadedAt) || Date.now() });
+    } catch (e) {
+      console.error(`Stored sheet of ${id} could not be read:`, e.message);
+    }
+  }
+  sheets.set(id, sh);
+  return sh;
+}
+const cur = () => (state.active ? state.chars[state.active] : null);
+const curSheet = () => sheetOf(state.active);
+for (const id of state.order) {
+  const c = state.chars[id];
+  const sh = sheetOf(id);
+  if (sh && !c.live) S.applyLoad(c, sh);
+  if (sh && !c.name) {
+    c.name = sh.name;
+    c.classLine = sh.classLine;
   }
 }
 let auth = readJson(FILES.auth, null);
@@ -69,31 +110,44 @@ function locked(fn) {
   return run;
 }
 
+const sheetKey = () => (state.active ? `${state.active}:${cur().sheetRev}:${VERSION}` : '');
 const clients = new Set();
+function event() {
+  return `event: rev\ndata: ${JSON.stringify({ rev: state.rev, sheetKey: sheetKey(), v: VERSION })}\n\n`;
+}
 async function save() {
   state.rev += 1;
   await writeJson(FILES.state, state);
-  const msg = `event: rev\ndata: ${JSON.stringify({ rev: state.rev, sheetRev: state.sheetRev, v: VERSION })}\n\n`;
+  const msg = event();
   for (const res of clients) res.write(msg);
 }
 
 function view() {
-  return {
+  const c = cur();
+  const sh = curSheet();
+  const base = {
     v: VERSION,
     rev: state.rev,
-    sheetRev: state.sheetRev,
-    hasSheet: Boolean(sheet),
-    settings: state.settings,
-    live: state.live,
-    baseline: state.baseline,
-    custom: state.custom,
-    notes: state.notes,
-    activeNote: state.activeNote,
-    surge: state.surge,
-    lastSync: state.lastSync,
-    loadedAt: state.loadedAt,
-    pending: S.diff(state, sheet),
+    sheetKey: sheetKey(),
+    active: state.active,
+    characters: state.order.map((id) => ({ id, name: state.chars[id].name || `Character ${id}`, classLine: state.chars[id].classLine || '' })),
+    hasSheet: Boolean(sh),
     auth: { has: Boolean(auth && auth.cobalt), savedAt: auth ? auth.savedAt : null },
+  };
+  if (!c) return { ...base, settings: { ...state.look, characterUrl: '', quotes: [], acOverride: null }, live: null, baseline: null, custom: [], notes: [], activeNote: null, surge: { log: [] }, actionPins: {}, lastSync: null, loadedAt: null, pending: [] };
+  return {
+    ...base,
+    settings: { ...state.look, ...c.settings },
+    live: c.live,
+    baseline: c.baseline,
+    custom: c.custom,
+    notes: c.notes,
+    activeNote: c.activeNote,
+    surge: c.surge,
+    actionPins: c.actionPins,
+    lastSync: c.lastSync,
+    loadedAt: c.loadedAt,
+    pending: S.diff(c, sh),
   };
 }
 
@@ -128,7 +182,7 @@ function readBody(req, limit = 1_500_000) {
   });
 }
 
-async function downloadAvatar(url) {
+async function downloadAvatar(id, url) {
   if (!url) return;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(15000), headers: { 'User-Agent': 'Mozilla/5.0' } });
@@ -137,34 +191,54 @@ async function downloadAvatar(url) {
     if (!/^image\//.test(type)) return;
     const buf = Buffer.from(await res.arrayBuffer());
     if (buf.length > 8_000_000) return;
-    await fsp.writeFile(FILES.avatar, buf);
-    await writeJson(`${FILES.avatar}.json`, { type, url, at: Date.now() });
+    await fsp.writeFile(imgFile(id), buf);
+    await writeJson(`${imgFile(id)}.json`, { type, url, at: Date.now() });
   } catch (e) {
     /* the portrait is a nice-to-have */
   }
 }
 
-async function loadSheet(force) {
-  const id = ddb.parseCharacterId(state.settings.characterUrl);
-  if (!id) throw new ddb.DdbError('Put your D&D Beyond character link in Settings first.', 'nolink');
-  const pending = S.diff(state, sheet);
-  if (pending.length && !force) return { needConfirm: true, pending };
+/**
+ * Loads a character from D&D Beyond: a new one is added to the list, a known one is refreshed. Either way it becomes
+ * the active character. Asks first (409) when that character has changes that are not on D&D Beyond yet.
+ */
+async function loadCharacter(url, force) {
+  const id = ddb.parseCharacterId(url);
+  if (!id) throw new ddb.DdbError('That is not a D&D Beyond character link (it looks like dndbeyond.com/characters/123456).', 'nolink');
+  const known = state.chars[id];
+  const c = known || S.newChar(id, String(url).trim());
+  if (known) {
+    const pending = S.diff(c, sheetOf(id));
+    if (pending.length && !force) return { needConfirm: true, pending, name: c.name };
+  } else if (state.order.length >= 20) {
+    throw new ddb.DdbError('That is a lot of characters. Remove one first (Settings).', 'full');
+  }
   const json = await ddb.fetchCharacter(id);
-  const next = buildSheet(json, { fetchedAt: Date.now() });
-  await writeJson(FILES.raw, json);
-  sheet = next;
-  state.sheetRev += 1;
-  S.applyLoad(state, sheet);
+  const sh = buildSheet(json, { fetchedAt: Date.now() });
+  await writeJson(rawFile(id), json);
+  sheets.set(id, sh);
+  c.sheetRev += 1;
+  c.name = sh.name;
+  c.classLine = sh.classLine;
+  S.applyLoad(c, sh);
+  if (!known) {
+    S.starterFor(c, sh);
+    state.chars[id] = c;
+    state.order.push(id);
+  }
+  state.active = id;
   await save();
-  downloadAvatar(sheet.avatarUrl).then(() => save()).catch(() => {});
-  return { loaded: true, name: sheet.name };
+  downloadAvatar(id, sh.avatarUrl).then(() => save()).catch(() => {});
+  return { loaded: true, name: sh.name, added: !known };
 }
 
 async function syncToDdb() {
-  if (!sheet || !state.live) throw new ddb.DdbError('Load your sheet first.', 'nosheet');
+  const c = cur();
+  const sh = curSheet();
+  if (!c || !sh || !c.live) throw new ddb.DdbError('Load your sheet first.', 'nosheet');
   if (!auth || !auth.cobalt) throw new ddb.DdbError('Add your D&D Beyond login cookie in Settings first.', 'nocookie');
-  const id = ddb.parseCharacterId(state.settings.characterUrl) || String(sheet.id);
-  const ops = ddb.planWrites(id, sheet, state.live, state.baseline);
+  const id = c.id;
+  const ops = ddb.planWrites(id, sh, c.live, c.baseline);
   if (!ops.length) return { results: [], allOk: true, nothing: true };
   const token = await ddb.getToken(auth.cobalt);
   const results = [];
@@ -182,7 +256,7 @@ async function syncToDdb() {
   const fresh = buildSheet(json, { fetchedAt: Date.now() });
   for (const r of results) {
     const op = ops.find((o) => o.key === r.key);
-    const landed = ddb.verify(op, fresh, state.live);
+    const landed = ddb.verify(op, fresh, c.live);
     if (r.ok && !landed) {
       r.ok = false;
       r.message = 'Sent, but D&D Beyond still shows the old value.';
@@ -192,14 +266,43 @@ async function syncToDdb() {
       r.message = '';
     }
   }
-  await writeJson(FILES.raw, json);
-  sheet = fresh;
-  state.sheetRev += 1;
-  S.applySynced(state, sheet);
-  state.lastSync = { at: Date.now(), by: 'app', results };
+  await writeJson(rawFile(id), json);
+  sheets.set(id, fresh);
+  c.sheetRev += 1;
+  S.applySynced(c, fresh);
+  c.lastSync = { at: Date.now(), by: 'app', results };
   await save();
   return { results, allOk: results.every((r) => r.ok) };
 }
+
+/** Changes that are not about one character's trackers: the look, and the list of characters. */
+async function rootAct(type, p) {
+  if (type === 'char/switch') {
+    if (!state.chars[p.id]) throw new S.ActionError('That character is not in the app any more.');
+    state.active = p.id;
+    return {};
+  }
+  if (type === 'char/remove') {
+    if (!state.chars[p.id]) throw new S.ActionError('That character is not in the app any more.');
+    delete state.chars[p.id];
+    state.order = state.order.filter((x) => x !== p.id);
+    sheets.delete(p.id);
+    for (const f of [rawFile(p.id), imgFile(p.id), `${imgFile(p.id)}.json`]) await fsp.rm(f, { force: true });
+    if (state.active === p.id) state.active = state.order[0] || null;
+    return {};
+  }
+  if (type === 'char/move') {
+    const i = state.order.indexOf(p.id);
+    if (i === -1) throw new S.ActionError('That character is not in the app any more.');
+    const j = Math.min(state.order.length - 1, Math.max(0, i + (p.dir === 'up' ? -1 : 1)));
+    state.order.splice(i, 1);
+    state.order.splice(j, 0, p.id);
+    return {};
+  }
+  return null;
+}
+
+const LOOK_KEYS = ['theme', 'size', 'showQuote'];
 
 const TYPES = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
@@ -230,17 +333,20 @@ async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   try {
-    if (p === '/api/health') return ok(res, { v: VERSION, rev: state.rev, hasSheet: Boolean(sheet) });
+    if (p === '/api/health') return ok(res, { v: VERSION, rev: state.rev, hasSheet: Boolean(curSheet()) });
     if (p === '/api/state' && req.method === 'GET') return ok(res, view());
     if (p === '/api/sheet' && req.method === 'GET') {
-      if (!sheet) return err(res, 404, 'No sheet loaded yet.');
-      const s = state.settings.acOverride != null ? { ...sheet, ac: state.settings.acOverride, acOverridden: true } : sheet;
-      return ok(res, { sheetRev: state.sheetRev, sheet: s });
+      const sh = curSheet();
+      if (!sh) return err(res, 404, 'No sheet loaded yet.');
+      const c = cur();
+      const s = c.settings.acOverride != null ? { ...sh, ac: c.settings.acOverride, acOverridden: true } : sh;
+      return ok(res, { sheetKey: sheetKey(), sheet: s });
     }
     if (p === '/avatar' && req.method === 'GET') {
+      const id = /^\d{4,12}$/.test(url.searchParams.get('id') || '') ? url.searchParams.get('id') : state.active;
       try {
-        const meta = readJson(`${FILES.avatar}.json`, { type: 'image/jpeg' });
-        const buf = await fsp.readFile(FILES.avatar);
+        const meta = readJson(`${imgFile(id)}.json`, { type: 'image/jpeg' });
+        const buf = await fsp.readFile(imgFile(id));
         res.writeHead(200, { 'Content-Type': meta.type, 'Cache-Control': 'no-cache' });
         return res.end(buf);
       } catch (e) {
@@ -249,7 +355,7 @@ async function handle(req, res) {
     }
     if (p === '/events' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      res.write(`event: rev\ndata: ${JSON.stringify({ rev: state.rev, sheetRev: state.sheetRev, v: VERSION })}\n\n`);
+      res.write(event());
       clients.add(res);
       const ping = setInterval(() => res.write(': ping\n\n'), 25000);
       req.on('close', () => {
@@ -268,10 +374,19 @@ async function handle(req, res) {
       if (p === '/api/act') {
         return await locked(async () => {
           try {
-            const before = JSON.stringify([state.live, state.custom, state.notes, state.settings, state.surge, state.activeNote, state.baseline]);
-            const result = S.apply(state, sheet, String(body.type || ''), body);
-            const after = JSON.stringify([state.live, state.custom, state.notes, state.settings, state.surge, state.activeNote, state.baseline]);
-            if (after !== before) await save();
+            const type = String(body.type || '');
+            const before = JSON.stringify(state);
+            let result = await rootAct(type, body);
+            if (result === null) {
+              if (type === 'settings/set' && LOOK_KEYS.some((k) => body[k] !== undefined)) S.applyLook(state, body);
+              const c = cur();
+              const charPart = type === 'settings/set' ? (body.quotes !== undefined || body.acOverride !== undefined) : true;
+              if (charPart) {
+                if (!c) throw new S.ActionError('Load a character first.');
+                result = S.apply(c, curSheet(), type, body);
+              } else result = {};
+            }
+            if (JSON.stringify(state) !== before) await save();
             return ok(res, { result, rev: state.rev });
           } catch (e) {
             if (e instanceof S.ActionError) return err(res, 400, e.message);
@@ -281,12 +396,10 @@ async function handle(req, res) {
       }
       if (p === '/api/load') {
         return await locked(async () => {
-          if (body.url !== undefined) {
-            S.apply(state, sheet, 'settings/set', { characterUrl: body.url });
-            await save();
-          }
-          const r = await loadSheet(Boolean(body.force));
-          if (r.needConfirm) return err(res, 409, 'You have changes that are not on D&D Beyond yet.', { pending: r.pending });
+          const c = cur();
+          const target = body.url !== undefined && String(body.url).trim() ? String(body.url) : c ? c.settings.characterUrl : '';
+          const r = await loadCharacter(target, Boolean(body.force));
+          if (r.needConfirm) return err(res, 409, 'You have changes that are not on D&D Beyond yet.', { pending: r.pending, name: r.name });
           return ok(res, r);
         });
       }
