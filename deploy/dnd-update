@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Updates the character app to the newest version on GitHub. Rolls back by itself if the new version does not start.
+#   pct exec 106 -- dnd-update            (from the Proxmox Shell)
+#   dnd-update --force                    (restart even when already up to date)
+set -euo pipefail
+
+APP=/opt/dnd-character
+PORT=3200
+cd "$APP"
+
+OLD="$(git rev-parse HEAD)"
+git fetch --quiet origin main
+NEW="$(git rev-parse origin/main)"
+if [ "$OLD" = "$NEW" ] && [ "${1:-}" != "--force" ]; then
+  echo "Already up to date: $(git log -1 --format='%h %s')"
+  exit 0
+fi
+
+rollback() {
+  echo "$1 Going back to the previous version." >&2
+  git reset --hard --quiet "$OLD"
+  systemctl restart dnd-character
+  exit 1
+}
+
+git reset --hard --quiet "$NEW"
+for f in server.js lib/*.js public/app.js; do
+  node --check "$f" || rollback "The new version has an error in $f."
+done
+install -m 755 "$APP/deploy/dnd-update" /usr/local/bin/dnd-update
+systemctl restart dnd-character
+
+for i in $(seq 1 15); do
+  if node -e "fetch('http://127.0.0.1:$PORT/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"; then
+    echo "Updated to $(git log -1 --format='%h %s')"
+    exit 0
+  fi
+  sleep 1
+done
+journalctl -u dnd-character -n 30 --no-pager >&2
+rollback "The new version did not start."

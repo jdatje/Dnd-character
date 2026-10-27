@@ -1,0 +1,11 @@
+{
+  "name": "dnd-character",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Phone app to play a D&D Beyond character at the table: trackers, notes, end-of-night sync",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test test/sheet.test.js test/state.test.js test/server.test.js"
+  },
+  "engines": { "node": ">=24" }
+}
