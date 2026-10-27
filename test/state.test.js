@@ -166,7 +166,15 @@ test('settings are checked', () => {
 
 test('Volo starts with his line and the quill tracker', () => {
   const st = fresh();
-  assert.equal(st.settings.quotes.length, 1);
+  const lines = require('../lib/volo-lines');
+  assert.deepEqual(st.settings.quotes, lines);
+  assert.ok(lines.length >= 30 && lines.every((l) => l.length <= 120), 'many short lines');
+  assert.equal(new Set(lines).size, lines.length, 'no line twice');
+  // existing Volo with only his first line gets the full set; edited lines are left alone
+  const old = S.normalizeChar({ settings: { quotes: [lines[0]] } }, '157221719');
+  assert.equal(old.settings.quotes.length, lines.length);
+  const edited = S.normalizeChar({ settings: { quotes: ['my own line'] } }, '157221719');
+  assert.deepEqual(edited.settings.quotes, ['my own line']);
   assert.equal(st.custom[0].id, 'spark');
   const other = S.newChar('42424242');
   S.starterFor(other, { ...sheet, inventory: [] });

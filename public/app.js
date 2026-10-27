@@ -54,7 +54,7 @@
   let SHEET = LS.get('sheet', null);
   let sheetKey = SHEET ? LS.get('sheetKey', '') : '';
   let offline = false;
-  const UI = { tab: LS.get('tab', 'actions'), other: LS.get('other', null), q: LS.get('q', 0), otherOpen: false, end: null };
+  const UI = { tab: LS.get('tab', 'actions'), other: LS.get('other', null), q: Math.floor(Math.random() * 100000), otherOpen: false, end: null };
   if (!['actions', 'spells', 'checks', 'features', 'other'].includes(UI.tab)) UI.tab = 'actions';
 
   /* ---------- talking to the server ---------- */
@@ -1184,7 +1184,7 @@
         try {
           if (NOTE.dirty) await saveNote();
           await act('char/switch', { id: d.id });
-          UI.q = 0;
+          UI.q = Math.floor(Math.random() * 100000);
           if (sheetIsOpen()) closeTop();
           if (pageName === 'settings') host().innerHTML = renderSettings();
           toast(`Now playing ${(S.characters.find((c) => c.id === d.id) || {}).name || 'that character'}`);
@@ -1215,9 +1215,11 @@
         if (!url) return toast('Paste the link of the character first.');
         return loadSheet(url, false, el);
       }
-      case 'quote':
-        UI.q += 1;
-        LS.set('q', UI.q);
+      case 'quote': {
+        // another random line, never the same one twice in a row
+        const n = (S.settings.quotes || []).length;
+        if (n > 1) UI.q = (UI.q % n) + 1 + Math.floor(Math.random() * (n - 1));
+      }
         return renderHeader();
       case 'go-notes':
         UI.tab = 'other';
