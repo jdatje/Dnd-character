@@ -32,18 +32,20 @@ Your own trackers (homebrew, notebook stickies) only exist in this app.
 ## Server
 
 Runs in container 106 (`dmdash`) as the systemd service `dnd-character` on port 3200, data in
-`/var/lib/dnd-character`, private https address through Tailscale on port 8444.
+`/var/lib/dnd-character`, private https address through Tailscale on port 8444. The app port is 3200, or the next free one (3210, 3220…) if something else uses 3200; it is kept in `/etc/dnd-character.env`.
 
-First install (Proxmox Shell on HomeDC):
-
-```
-pct exec 106 -- bash -c "git clone https://github.com/jdatje/dnd-character /opt/dnd-character && bash /opt/dnd-character/deploy/setup.sh"
-```
-
-Update to the newest version on GitHub (rolls back by itself if it does not start):
+First install, in the console of container 106 (`root@dmdash`):
 
 ```
-pct exec 106 -- dnd-update
+[ -d /opt/dnd-character ] || git clone https://github.com/jdatje/dnd-character /opt/dnd-character; git -C /opt/dnd-character pull -q; bash /opt/dnd-character/deploy/setup.sh
+```
+
+(From the HomeDC Shell instead: put `pct exec 106 -- bash -c "…"` around it.)
+
+Update to the newest version on GitHub (rolls back by itself if it does not start), inside container 106:
+
+```
+dnd-update
 ```
 
 Useful:
