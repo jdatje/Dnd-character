@@ -10,7 +10,7 @@ Separate from the DM dashboard, but runs next to it on the home server. No npm p
 
 - **Header** on every screen: portrait, name, heroic inspiration, notes, settings, HP (tap to damage, heal, set temp), AC, initiative, an in-character line (tap to shuffle, edit the lines in Settings).
 - **Tabs**: Actions, Spells, Checks (abilities, saves, skills, senses), Features, Other (Notes, Inventory, Speed & Defences, Proficiencies, Background & story).
-- **Trackers drawer** (handle on the side, tap or drag): spell slots, sorcery points with Font of Magic both ways, Wild Magic (Tides of Chaos, d20 surge check, d100 surge table with the text from your sheet), every limited use from the sheet, your own trackers, short and long rest, End night.
+- **Tracker strip** above the tab bar shows slots left, sorcery points and Tides; tap it for the **trackers sheet**: spell slots, sorcery points with Font of Magic both ways, Wild Magic (Tides of Chaos, d20 surge check, d100 surge table with the text from your sheet), every limited use from the sheet, your own trackers, short and long rest, End night.
 - **Casting**: pick a slot (or the free cast from a feat). A Sorcerer spell with a slot offers the surge check; with Tides of Chaos spent it surges automatically (2024 rules) and Tides comes back.
 - **Notes**: as many notes as you like, chips to switch, free text with `- ` lists, `[] ` checkboxes and `# ` headings.
 - **Settings**: six styles, size slider (80–130%), in-character line on/off, keep screen on, handle side, character link, login cookie for sending back, AC by hand.
@@ -42,11 +42,15 @@ First install, in the console of container 106 (`root@dmdash`):
 
 (From the HomeDC Shell instead: put `pct exec 106 -- bash -c "…"` around it.)
 
-Update to the newest version on GitHub (rolls back by itself if it does not start), inside container 106:
+**Updates install themselves**: a timer (`dnd-update.timer`) checks GitHub every 5 minutes and runs the update,
+which rolls back by itself if the new version does not start. Open phones reload on their own when they notice the
+new version (not while you are typing or have a window open). Update right now, inside container 106:
 
 ```
 dnd-update
 ```
+
+Turn automatic updates off: `systemctl disable --now dnd-update.timer` (running `dnd-update` by hand turns them on again).
 
 Useful:
 

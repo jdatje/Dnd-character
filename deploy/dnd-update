@@ -1,20 +1,73 @@
 #!/usr/bin/env bash
 # Updates the character app to the newest version on GitHub. Rolls back by itself if the new version does not start.
-#   dnd-update                            (inside container 106)
-#   pct exec 106 -- dnd-update            (from the HomeDC Shell)
-#   dnd-update --force                    (restart even when already up to date)
+#   dnd-update                 update now (inside container 106; from the HomeDC Shell: pct exec 106 -- dnd-update)
+#   dnd-update --force         restart even when already up to date
+#   dnd-update --auto          what the timer runs every 5 minutes: quiet when there is nothing new
+#   dnd-update --units-only    only (re)install the automatic-update timer
+# Automatic updates: the timer dnd-update.timer runs "dnd-update --auto" every 5 minutes.
+#   Turn off:  systemctl disable --now dnd-update.timer     Turn on again:  dnd-update
 set -euo pipefail
 
 APP=/opt/dnd-character
 PORT="$(sed -n 's/^PORT=//p' /etc/dnd-character.env 2>/dev/null | head -n1)"
 PORT="${PORT:-3200}"
-cd "$APP"
+MODE="${1:-}"
 
+# one update at a time (the timer and a manual run could meet)
+exec 9>/run/dnd-update.lock
+if ! flock -n 9; then
+  [ "$MODE" = "--auto" ] || echo "Another update is running right now. Try again in a minute."
+  exit 0
+fi
+
+write_if_changed() { # file, content: only touch systemd when something really changed
+  if [ ! -f "$1" ] || [ "$(cat "$1")" != "$2" ]; then
+    printf '%s\n' "$2" > "$1"
+    return 0
+  fi
+  return 1
+}
+
+install_units() {
+  local changed=0
+  write_if_changed /etc/systemd/system/dnd-update.service "[Unit]
+Description=Update the D&D character app from GitHub
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/dnd-update --auto" && changed=1
+  write_if_changed /etc/systemd/system/dnd-update.timer "[Unit]
+Description=Check GitHub for a new version of the D&D character app every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target" && changed=1
+  if [ "$changed" = 1 ]; then systemctl daemon-reload; fi
+  if [ "$MODE" != "--auto" ] && ! systemctl is-enabled --quiet dnd-update.timer 2>/dev/null; then
+    systemctl enable --now dnd-update.timer >/dev/null 2>&1
+    echo "Automatic updates are on: the server checks GitHub every 5 minutes."
+  fi
+}
+
+install_units
+[ "$MODE" = "--units-only" ] && exit 0
+
+cd "$APP"
 OLD="$(git rev-parse HEAD)"
-git fetch --quiet origin main
+if ! git fetch --quiet origin main 2>/dev/null; then
+  [ "$MODE" = "--auto" ] && exit 0 # no internet right now: try again next time
+  echo "Could not reach GitHub." >&2
+  exit 1
+fi
 NEW="$(git rev-parse origin/main)"
-if [ "$OLD" = "$NEW" ] && [ "${1:-}" != "--force" ]; then
-  echo "Already up to date: $(git log -1 --format='%h %s')"
+if [ "$OLD" = "$NEW" ] && [ "$MODE" != "--force" ]; then
+  [ "$MODE" = "--auto" ] || echo "Already up to date: $(git log -1 --format='%h %s')"
   exit 0
 fi
 
@@ -25,6 +78,7 @@ rollback() {
   exit 1
 }
 
+echo "Updating to: $(git log -1 --format='%h %s' "$NEW")"
 git reset --hard --quiet "$NEW"
 for f in server.js lib/*.js public/app.js; do
   node --check "$f" || rollback "The new version has an error in $f."

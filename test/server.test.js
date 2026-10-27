@@ -82,6 +82,8 @@ test('serves the app shell', async () => {
   assert.match(await res.text(), /<nav id="tabs"/);
   const sw = await fetch(`${base}/sw.js`);
   assert.equal(sw.status, 200);
+  const h = await (await fetch(`${base}/api/health`)).json();
+  assert.match(h.v, /^[0-9a-f]{10}$/, 'the app version is reported for automatic reloads');
   const nope = await fetch(`${base}/../server.js`);
   assert.notEqual((await nope.text()).includes('require('), true);
 });

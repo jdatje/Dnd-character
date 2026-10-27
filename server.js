@@ -24,6 +24,17 @@ const FILES = {
 };
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// version of the phone app: changes whenever an update changes its files, so open phones know to reload
+const VERSION = (() => {
+  const h = require('crypto').createHash('sha1');
+  for (const f of ['index.html', 'app.js', 'app.css', 'sw.js']) {
+    try {
+      h.update(fs.readFileSync(path.join(PUBLIC, f)));
+    } catch (e) { /* missing file: still a version */ }
+  }
+  return h.digest('hex').slice(0, 10);
+})();
+
 function readJson(file, fallback) {
   try {
     return JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -62,12 +73,13 @@ const clients = new Set();
 async function save() {
   state.rev += 1;
   await writeJson(FILES.state, state);
-  const msg = `event: rev\ndata: ${JSON.stringify({ rev: state.rev, sheetRev: state.sheetRev })}\n\n`;
+  const msg = `event: rev\ndata: ${JSON.stringify({ rev: state.rev, sheetRev: state.sheetRev, v: VERSION })}\n\n`;
   for (const res of clients) res.write(msg);
 }
 
 function view() {
   return {
+    v: VERSION,
     rev: state.rev,
     sheetRev: state.sheetRev,
     hasSheet: Boolean(sheet),
@@ -218,7 +230,7 @@ async function handle(req, res) {
   const url = new URL(req.url, 'http://x');
   const p = url.pathname;
   try {
-    if (p === '/api/health') return ok(res, { rev: state.rev, hasSheet: Boolean(sheet) });
+    if (p === '/api/health') return ok(res, { v: VERSION, rev: state.rev, hasSheet: Boolean(sheet) });
     if (p === '/api/state' && req.method === 'GET') return ok(res, view());
     if (p === '/api/sheet' && req.method === 'GET') {
       if (!sheet) return err(res, 404, 'No sheet loaded yet.');
@@ -237,7 +249,7 @@ async function handle(req, res) {
     }
     if (p === '/events' && req.method === 'GET') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
-      res.write(`event: rev\ndata: ${JSON.stringify({ rev: state.rev, sheetRev: state.sheetRev })}\n\n`);
+      res.write(`event: rev\ndata: ${JSON.stringify({ rev: state.rev, sheetRev: state.sheetRev, v: VERSION })}\n\n`);
       clients.add(res);
       const ping = setInterval(() => res.write(': ping\n\n'), 25000);
       req.on('close', () => {

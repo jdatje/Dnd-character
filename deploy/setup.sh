@@ -69,6 +69,7 @@ WantedBy=multi-user.target
 EOF
 
 install -m 755 "$APP/deploy/dnd-update" /usr/local/bin/dnd-update
+/usr/local/bin/dnd-update --units-only
 systemctl daemon-reload
 systemctl enable dnd-character >/dev/null 2>&1
 systemctl restart dnd-character
@@ -92,4 +93,5 @@ NAME="$(tailscale status --json | "$NODE" -e "let s='';process.stdin.on('data',d
 echo
 echo "Done. Open on your phone (Tailscale on):"
 echo "  https://$NAME:$HTTPS_PORT"
-echo "Update later with:  dnd-update   (inside this container)"
+echo "Updates install themselves (the server checks GitHub every 5 minutes)."
+echo "Update right now:  dnd-update   (inside this container)"

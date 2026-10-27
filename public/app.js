@@ -96,6 +96,7 @@
     refreshing = (async () => {
       try {
         const st = await api('/api/state');
+        checkVersion(st.v);
         S = st;
         LS.set('state', S);
         if (S.hasSheet && S.sheetRev !== sheetRev) {
@@ -127,12 +128,35 @@
     }
   }
 
+  /* a new version on the server (automatic update): reload, but not while you are typing or in a dialog */
+  let bootVersion = null;
+  let reloadTimer = null;
+  function checkVersion(v) {
+    if (!v) return;
+    if (!bootVersion) {
+      bootVersion = v;
+      return;
+    }
+    if (v === bootVersion || reloadTimer) return;
+    const tryReload = async () => {
+      const busy = editingNote() || sheetIsOpen() || pageName || $('#drawer').classList.contains('open');
+      if (busy) {
+        reloadTimer = setTimeout(tryReload, 3000);
+        return;
+      }
+      if (NOTE.dirty) await saveNote();
+      location.reload();
+    };
+    reloadTimer = setTimeout(tryReload, 500);
+  }
+
   function listen() {
     if (!window.EventSource) return setInterval(refresh, 15000);
     const es = new EventSource('/events');
     es.addEventListener('rev', (e) => {
       try {
         const d = JSON.parse(e.data);
+        if (d.v) checkVersion(d.v);
         if (!S || d.rev !== S.rev || d.sheetRev !== sheetRev) refresh();
       } catch (err) { /* ignore */ }
     });
@@ -197,9 +221,6 @@
     document.documentElement.dataset.theme = theme.id;
     document.documentElement.style.fontSize = `${(16 * (st.size || 100)) / 100}px`;
     $('meta[name="theme-color"]').setAttribute('content', theme.header);
-    const side = st.handleSide === 'left' ? 'left' : 'right';
-    $('#app').dataset.side = side;
-    $('#drawer').classList.toggle('left', side === 'left');
   }
 
   /* ---------- header ---------- */
@@ -259,28 +280,40 @@
     return `<section class="sec"><div class="sec-h"><h2>${esc(title)}</h2>${side ? `<span class="side">${side}</span>` : ''}</div>${body}</section>`;
   }
 
+  /** "+6" stays as is; "DC 14 INT" becomes "DC 14" with the ability small underneath, so every chip has the same size. */
+  function hitChip(hit) {
+    if (!hit) return '<span></span>';
+    const m = String(hit).match(/^(DC \d+)\s+([A-Z]{3})$/);
+    if (m) return `<span class="chip hit dc">${esc(m[1])}<small>${esc(m[2])}</small></span>`;
+    return `<span class="chip hit">${esc(hit)}</span>`;
+  }
+
+  function actionRow(a) {
+    const u = a.useKey && useOf(a.useKey);
+    const right = u ? pips('use', u.key, u.max, usedOf(u.key), { box: true, sm: true }) : esc(a.damage || '');
+    return `<div class="arow">
+      <button type="button" class="a-main" data-a="detail" data-kind="action" data-i="${a.i}">
+        <span class="name">${esc(a.name)}</span><span class="meta">${esc(a.meta)}</span>
+      </button>
+      ${hitChip(a.hit)}
+      <span class="a-dmg${u ? ' has-pips' : ''}">${right}</span>
+    </div>`;
+  }
+
   function renderActions() {
-    const order = ['Attacks', 'Actions', 'Spells', 'Bonus actions', 'Reactions', 'Other'];
     const groups = {};
-    SHEET.actions.forEach((a, i) => (groups[a.group] = groups[a.group] || []).push({ ...a, i }));
+    SHEET.actions.forEach((a, i) => {
+      const g = ['Attacks', 'Bonus actions', 'Reactions'].includes(a.group) ? a.group : 'More';
+      (groups[g] = groups[g] || []).push({ ...a, i });
+    });
     let h = '';
-    for (const g of order) {
+    for (const g of ['Attacks', 'Bonus actions', 'Reactions', 'More']) {
       const list = groups[g];
       if (!list) continue;
-      const collapsed = g === 'Other' && !UI.otherOpen;
-      const rows = collapsed ? '' : list.map((a) => {
-        const u = a.useKey && useOf(a.useKey);
-        return `<div class="row">
-          <button type="button" class="main" style="all:unset;flex:1;min-width:0;cursor:pointer" data-a="detail" data-kind="action" data-i="${a.i}">
-            <div class="name">${esc(a.name)}</div><div class="meta">${esc(a.meta)}</div>
-          </button>
-          ${a.hit ? `<span class="chip">${esc(a.hit)}</span>` : ''}
-          ${a.damage ? `<span class="dmg">${esc(a.damage)}</span>` : ''}
-          ${u ? pips('use', u.key, u.max, usedOf(u.key), { box: true, sm: true }) : ''}
-        </div>`;
-      }).join('');
-      const head = g === 'Other'
-        ? `<div class="sec-h"><h2>Other</h2><button type="button" class="btn small" data-a="toggle-other">${collapsed ? `Show ${list.length}` : 'Hide'}</button></div>`
+      const collapsed = g === 'More' && !UI.otherOpen;
+      const rows = collapsed ? '' : list.map(actionRow).join('');
+      const head = g === 'More'
+        ? `<div class="sec-h"><h2>More actions</h2><button type="button" class="btn small" data-a="toggle-other">${collapsed ? `Show ${list.length}` : 'Hide'}</button></div>`
         : `<div class="sec-h"><h2>${esc(g)}</h2></div>`;
       h += `<section class="sec">${head}${rows}</section>`;
     }
@@ -608,7 +641,7 @@
   function renderDrawer() {
     const d = $('#drawer');
     if (!SHEET) {
-      d.innerHTML = `<div class="dh"><h2>Trackers</h2><button type="button" class="icon-btn plain" data-a="drawer-close" aria-label="Close">${ICON.close}</button></div><div class="db"><p class="empty">Load your sheet first (Settings).</p></div>`;
+      d.innerHTML = `<div class="grab" aria-hidden="true"></div><div class="dh"><h2>Trackers</h2><button type="button" class="icon-btn plain" data-a="drawer-close" aria-label="Close">${ICON.close}</button></div><div class="db"><p class="empty">Load your sheet first (Settings).</p></div>`;
       return;
     }
     const live = L();
@@ -660,7 +693,7 @@
     </section>`;
 
     const pending = (S.pending || []).length;
-    d.innerHTML = `<div class="dh"><h2>Trackers</h2><button type="button" class="icon-btn plain" data-a="drawer-close" aria-label="Close trackers">${ICON.close}</button></div>
+    d.innerHTML = `<div class="grab" aria-hidden="true"></div><div class="dh"><h2>Trackers</h2><button type="button" class="icon-btn plain" data-a="drawer-close" aria-label="Close trackers">${ICON.close}</button></div>
       <div class="db">${h}</div>
       <div class="df">
         <button type="button" class="btn" data-a="rest-short">Short rest</button>
@@ -669,20 +702,37 @@
       </div>`;
   }
 
-  function renderHandle() {
-    const dots = $('#handle .dots');
+  /** The strip above the tab bar: what is left at a glance; tap it to open the trackers. */
+  function renderStrip() {
+    const el = $('#strip');
     if (!SHEET) {
-      dots.innerHTML = '';
+      el.innerHTML = '';
       return;
     }
     const live = L();
-    const anySlot = SHEET.slots.some((s) => s.max + (live.extra[s.level] || 0) - (live.slots[s.level] ?? 0) > 0);
+    const parts = [];
+    for (const s of SHEET.slots) {
+      const extra = live.extra[s.level] || 0;
+      const total = s.max + extra;
+      const left = total - (live.slots[s.level] ?? 0);
+      const dots = total <= 6
+        ? Array.from({ length: total }, (_, i) => `<i class="${i < left ? '' : 'used'}"></i>`).join('')
+        : `<b>${left}/${total}</b>`;
+      parts.push(`<span class="sg"><span class="sl">${ord(s.level)}</span><span class="sd">${dots}</span></span>`);
+    }
+    for (const s of SHEET.pact) {
+      const left = s.max - (live.pact[s.level] ?? 0);
+      parts.push(`<span class="sg"><span class="sl">Pact</span><b>${left}/${s.max}</b></span>`);
+    }
     const sp = findUse(/Sorcery Points/);
+    if (sp) parts.push(`<span class="sg"><span class="sl">SP</span><b class="spv">${sp.max - usedOf(sp.key)}</b></span>`);
     const tides = findUse(/^Tides of Chaos$/);
-    const marks = [anySlot];
-    if (sp) marks.push(sp.max - usedOf(sp.key) > 0);
-    if (tides) marks.push(usedOf(tides.key) === 0);
-    dots.innerHTML = marks.map((m) => `<i class="${m ? '' : 'used'}"></i>`).join('');
+    if (tides) {
+      const ready = usedOf(tides.key) === 0;
+      parts.push(`<span class="sg"><span class="sl">Tides</span><i class="tide${ready ? '' : ' used'}" aria-label="${ready ? 'ready' : 'used'}"></i></span>`);
+    }
+    const pending = (S.pending || []).length;
+    el.innerHTML = `<span class="sp-items">${parts.join('')}</span><span class="sp-open">${pending ? `<span class="badge" aria-label="${pending} changes not on D&D Beyond yet">${pending}</span>` : ''}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 15l6-6 6 6"/></svg></span>`;
   }
 
   /* ---------- layers: drawer, bottom sheet, full page (the phone's Back button closes the top one) ---------- */
@@ -707,14 +757,14 @@
     $('#drawer').classList.add('open');
     $('#drawer').setAttribute('aria-hidden', 'false');
     $('#drawer-scrim').classList.add('open');
-    $('#handle').setAttribute('aria-expanded', 'true');
+    $('#strip').setAttribute('aria-expanded', 'true');
     pushLayer('drawer');
   }
   function hideDrawer() {
     $('#drawer').classList.remove('open');
     $('#drawer').setAttribute('aria-hidden', 'true');
     $('#drawer-scrim').classList.remove('open');
-    $('#handle').setAttribute('aria-expanded', 'false');
+    $('#strip').setAttribute('aria-expanded', 'false');
   }
 
   let sheetOnClose = null;
@@ -954,7 +1004,6 @@
         <section class="card" style="padding:0 .9rem">
           <div class="setrow"><span class="t">In-character line<small>Shown under your name</small></span><button type="button" class="switch" role="switch" aria-checked="${st.showQuote}" data-a="toggle-quote" aria-label="Show in-character line"><i></i></button></div>
           <div class="setrow"><span class="t">Keep screen on<small>While the app is open (this device)</small></span><button type="button" class="switch" role="switch" aria-checked="${wake}" data-a="toggle-wake" aria-label="Keep screen on"><i></i></button></div>
-          <div class="setrow"><span class="t">Trackers handle</span><div class="seg" style="width:10rem"><button type="button" data-a="side" data-v="left" aria-pressed="${st.handleSide === 'left'}">Left</button><button type="button" data-a="side" data-v="right" aria-pressed="${st.handleSide !== 'left'}">Right</button></div></div>
         </section>
         <section class="sec"><div class="sec-h"><h2><label for="quotes">In-character lines</label></h2><span class="side">one per line</span></div>
           <textarea id="quotes" class="input" rows="5">${esc((st.quotes || []).join('\n'))}</textarea>
@@ -1016,7 +1065,7 @@
     applyLook();
     renderHeader();
     renderTabs();
-    renderHandle();
+    renderStrip();
     const main = $('#main');
     if (!(UI.tab === 'other' && UI.other === 'notes' && editingNote())) {
       const y = main.scrollTop;
@@ -1033,7 +1082,7 @@
     }
     if ($('#drawer').classList.contains('open')) renderDrawer();
     renderPage();
-    $('#handle').classList.toggle('hidden', !SHEET);
+    $('#strip').classList.toggle('hidden', !SHEET);
   }
 
   function setTab(tab) {
@@ -1220,8 +1269,6 @@
         LS.set('wake', !LS.get('wake', true));
         wakeLock();
         return renderPage();
-      case 'side':
-        return act('settings/set', { handleSide: d.v });
       case 'save-quotes':
         await act('settings/set', { quotes: $('#quotes').value.split('\n') });
         return toast('Lines saved');
@@ -1304,44 +1351,26 @@
   $('#drawer-scrim').addEventListener('click', closeTop);
   $('#sheet-scrim').addEventListener('click', closeTop);
 
-  /* the handle: tap, or drag it in */
+  /* the strip opens the trackers; swipe the sheet down (from its top part) to close it */
+  $('#strip').addEventListener('click', openDrawer);
   (() => {
-    const h = $('#handle');
-    let start = null;
-    h.addEventListener('pointerdown', (e) => {
-      start = { x: e.clientX, y: e.clientY };
-      h.setPointerCapture(e.pointerId);
-    });
-    h.addEventListener('pointerup', () => {
-      start = null;
-      openDrawer();
-    });
-    h.addEventListener('pointercancel', () => {
-      start = null;
-    });
-    h.addEventListener('pointermove', (e) => {
-      if (!start) return;
-      const left = $('#app').dataset.side === 'left';
-      const dx = left ? e.clientX - start.x : start.x - e.clientX;
-      if (dx > 24) {
-        start = null;
-        openDrawer();
-      }
-    });
-    // swipe the drawer back out
     const dr = $('#drawer');
     let s2 = null;
     dr.addEventListener('pointerdown', (e) => {
       if (e.target.closest('button, input, textarea')) return;
+      const body = $('.db', dr);
+      if (body && body.contains(e.target) && body.scrollTop > 0) return; // scrolling the list, not closing
       s2 = { x: e.clientX, y: e.clientY };
     });
     dr.addEventListener('pointerup', (e) => {
       if (!s2) return;
-      const left = dr.classList.contains('left');
-      const dx = left ? s2.x - e.clientX : e.clientX - s2.x;
-      const dy = Math.abs(e.clientY - s2.y);
+      const dy = e.clientY - s2.y;
+      const dx = Math.abs(e.clientX - s2.x);
       s2 = null;
-      if (dx > 70 && dx > dy * 1.5) closeTop();
+      if (dy > 70 && dy > dx * 1.5) closeTop();
+    });
+    dr.addEventListener('pointercancel', () => {
+      s2 = null;
     });
   })();
 

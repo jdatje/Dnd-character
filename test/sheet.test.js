@@ -65,6 +65,9 @@ test('features, homebrew item and actions', () => {
   assert.equal(dagger.hit, '+2');
   assert.equal(dagger.damage, '1d4 piercing');
   assert.ok(!s.actions.some((a) => a.name === 'Friends'), 'utility cantrips are not attacks');
+  assert.ok(!s.actions.some((a) => a.name === 'Shatter' || a.name === 'Ice Knife'), 'leveled action spells stay in the Spells tab');
+  assert.ok(s.actions.some((a) => a.name === 'Misty Step' && a.group === 'Bonus actions'), 'bonus action spells still listed');
+  assert.ok(s.actions.some((a) => a.name === 'Fire Bolt' && a.group === 'Attacks'));
 });
 
 test('wild magic surge table and 2024 rule', () => {
