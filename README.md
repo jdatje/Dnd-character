@@ -14,6 +14,8 @@ Separate from the DM dashboard, but runs next to it on the home server. No npm p
 - **Tabs**: Actions, Spells, Checks (abilities, saves, skills, senses), Features, Other (Notes, Inventory, Speed & Defences, Proficiencies, Background & story).
 - **Tracker strip** above the tab bar shows slots left, sorcery points and Tides; tap it for the **trackers sheet**: spell slots, sorcery points with Font of Magic both ways, Wild Magic (Tides of Chaos, d20 surge check, d100 surge table with the text from your sheet), every limited use from the sheet, your own trackers, short and long rest, End night.
 - **Casting**: pick a slot (or the free cast from a feat). A Sorcerer spell with a slot offers the surge check; with Tides of Chaos spent it surges automatically (2024 rules) and Tides comes back.
+- **Wild Magic house rules** (switch per character, on for Volo): before every spell with a slot, a flat d20 against the Wild Magic DC (starts at 5). Made it: the spell goes off, the slot is used, DC +1 (max 20). Failed: surge table, no spell, the slot stays free, DC back to 5. Cantrips and free casts are not checked. Tides of Chaos is a switch Free to use / DM danger; a surge (DM forces one) brings it back. A long rest resets the DC and Tides.
+- **Markers**: circles are empty while unused and fill up when used.
 - **Notes**: as many notes as you like, chips to switch, free text with `- ` lists, `[] ` checkboxes and `# ` headings.
 - **Settings**: six styles, size slider (80–130%), in-character line on/off, keep screen on, characters, login cookie for sending back, AC by hand.
 - Works on several devices at once (changes show up everywhere) and can be added to the phone's home screen.

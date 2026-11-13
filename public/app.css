@@ -113,11 +113,12 @@ button.row { cursor: pointer; }
 
 /* pips: tap to use */
 .pips { display: flex; gap: .4rem; flex-wrap: wrap; }
-.pip { width: 2rem; height: 2rem; border-radius: 50%; border: 2px solid var(--sp); background: var(--sp); padding: 0; flex: none; }
-.pip.used { background: transparent; }
+/* markers: empty = still available, filled = used (like a sticky on the notebook) */
+.pip { width: 2rem; height: 2rem; border-radius: 50%; border: 2px solid var(--sp); background: transparent; padding: 0; flex: none; }
+.pip.used { background: var(--sp); }
 .pip.extra { border-style: dashed; }
-.pip.box { border-color: var(--hp); background: var(--hp); }
-.pip.box.used { background: transparent; }
+.pip.box { border-color: var(--hp); background: transparent; }
+.pip.box.used { background: var(--hp); }
 .pip.sm { width: 1.5rem; height: 1.5rem; }
 
 
@@ -203,12 +204,12 @@ button.row { cursor: pointer; }
 #strip .sg { display: flex; align-items: center; gap: .35rem; flex: none; }
 #strip .sl { font-size: .68rem; color: var(--muted); letter-spacing: .04em; }
 #strip .sd { display: flex; gap: .2rem; }
-#strip .sd i { width: .62rem; height: .62rem; border-radius: 50%; background: var(--sp); border: 1.5px solid var(--sp); display: block; }
-#strip .sd i.used { background: transparent; }
+#strip .sd i { width: .62rem; height: .62rem; border-radius: 50%; background: transparent; border: 1.5px solid var(--sp); display: block; }
+#strip .sd i.used { background: var(--sp); }
 #strip b { font-size: .9rem; }
 #strip .spv { color: var(--sp); }
-#strip .tide { width: .75rem; height: .75rem; border-radius: 50%; background: var(--good); display: block; }
-#strip .tide.used { background: transparent; border: 1.5px solid var(--muted); }
+#strip .tide { width: .75rem; height: .75rem; border-radius: 50%; background: transparent; border: 1.5px solid var(--good); display: block; }
+#strip .tide.used { background: var(--bad); border-color: var(--bad); }
 #strip .sp-open { display: flex; align-items: center; gap: .4rem; color: var(--accent); flex: none; }
 #strip .sp-open svg { width: 1.3rem; height: 1.3rem; }
 #strip .badge { min-width: 1.3rem; height: 1.3rem; border-radius: .65rem; background: var(--hp); color: var(--ink); font-size: .7rem; font-weight: 700; display: inline-flex; align-items: center; justify-content: center; padding: 0 .3rem; }
@@ -234,6 +235,9 @@ button.row { cursor: pointer; }
 .tides { min-height: 3rem; border-radius: .625rem; border: 1px solid var(--line); background: var(--surface2); display: flex; align-items: center; justify-content: space-between; padding: 0 .75rem; width: 100%; }
 .pill { font-size: .72rem; font-weight: 700; padding: .25rem .65rem; border-radius: 1rem; color: var(--ink); background: var(--good); }
 .pill.off { background: var(--muted); }
+.pill.danger { background: var(--bad); color: #1a0505; }
+#strip .dcv { color: var(--accent); }
+.icon-btn[disabled] { opacity: .35; }
 .result { border-radius: .625rem; background: var(--surface2); padding: .6rem .75rem; display: flex; gap: .7rem; align-items: flex-start; font-size: .85rem; }
 .result .roll { font-size: 1.7rem; font-weight: 700; color: var(--accent); min-width: 2.6rem; text-align: center; line-height: 1.1; }
 .urow { display: flex; align-items: center; gap: .6rem; min-height: 3rem; border-top: 1px solid var(--line2); padding: .3rem 0; }

@@ -181,6 +181,7 @@
   const useOf = (key) => SHEET && SHEET.uses.find((u) => u.key === key);
   const usedOf = (key) => L().uses[key] ?? 0;
   const findUse = (re) => SHEET && SHEET.uses.find((u) => re.test(u.name));
+  const homebrew = () => Boolean(S && S.settings && S.settings.homebrewWild && SHEET && SHEET.wildMagic);
 
   function pips(kind, key, max, used, { box = false, sm = false, extra = 0 } = {}) {
     const total = max + extra;
@@ -189,7 +190,7 @@
     }
     let h = '';
     for (let i = 0; i < total; i++) {
-      const isUsed = i >= total - used;
+      const isUsed = i < used; // used ones fill up from the left
       h += `<button type="button" class="pip${box ? ' box' : ''}${sm ? ' sm' : ''}${isUsed ? ' used' : ''}${i >= max ? ' extra' : ''}" data-a="pip" data-kind="${kind}" data-key="${esc(key)}" data-used="${isUsed ? 1 : 0}" aria-label="${isUsed ? 'Used' : 'Available'}${i >= max ? ' (created)' : ''}, tap to ${isUsed ? 'get back' : 'use'}"></button>`;
     }
     return `<div class="pips">${h}</div>`;
@@ -701,9 +702,24 @@
       const ready = tides && usedOf(tides.key) === 0;
       const last = S.surge && S.surge.log && S.surge.log[0];
       let res = '';
-      if (last && last.type === 'table') res = `<div class="result"><span class="roll">${last.roll}</span><div class="rich">${last.html || 'No row for this number in your surge table.'}</div></div>`;
+      if (last && last.type === 'dc') res = `<div class="result"><span class="roll">${last.roll ?? (last.made ? '✓' : '✗')}</span><div>DC ${last.dc} check: ${last.made ? 'made it, spell cast.' : '<b>failed</b>, surge!'}</div></div>`;
+      else if (last && last.type === 'table') res = `<div class="result"><span class="roll">${last.roll}</span><div class="rich">${last.html || 'No row for this number in your surge table.'}</div></div>`;
       else if (last && last.type === 'check') res = `<div class="result"><span class="roll">${last.roll}</span><div>d20 surge check: ${last.surge ? '<b>Surge!</b>' : 'no surge.'}</div></div>`;
-      h += `<section class="tbox"><div class="sec-h"><h2>Wild magic</h2></div>
+      if (homebrew()) {
+        const dc = S.wildDc || 5;
+        h += `<section class="tbox"><div class="sec-h"><h2>Wild magic</h2><span class="hint">house rules</span></div>
+        <div class="counter">
+          <button type="button" class="icon-btn" data-a="dc" data-d="-1" aria-label="Lower the DC" ${dc <= 5 ? 'disabled' : ''}>−</button>
+          <div class="big"><span style="font-size:.8rem;color:var(--muted);display:block">Wild Magic DC</span><b style="color:var(--accent)">${dc}</b></div>
+          <button type="button" class="icon-btn" data-a="dc" data-d="1" aria-label="Raise the DC" ${dc >= 20 ? 'disabled' : ''}>+</button>
+        </div>
+        <p class="hint" style="margin:0">Before every spell with a slot: d20, ${dc} or higher casts it (DC +1). Lower: surge, no spell, DC back to 5.</p>
+        ${tides ? `<button type="button" class="tides" data-a="tides" aria-pressed="${!ready}"><b style="font-size:.9rem">Tides of Chaos</b><span class="pill${ready ? '' : ' danger'}">${ready ? 'FREE TO USE' : 'DM DANGER'}</span></button>` : ''}
+        ${tides && !ready ? '<p class="hint" style="margin:0">Used: the DM can call a surge at any moment. After it, Tides is free again.</p>' : ''}
+        <button type="button" class="btn primary" data-a="surge-table">${tides && !ready ? 'DM forces a surge (d100)' : 'Roll on the surge table (d100)'}</button>
+        ${res}
+      </section>`;
+      } else h += `<section class="tbox"><div class="sec-h"><h2>Wild magic</h2></div>
         ${tides ? `<button type="button" class="tides" data-a="tides"><b style="font-size:.9rem">Tides of Chaos</b><span class="pill${ready ? '' : ' off'}">${ready ? 'READY' : 'USED'}</span></button>` : ''}
         ${tides && !ready ? '<p class="hint" style="margin:0">Spent: your next Sorcerer spell with a slot surges for sure (and brings it back).</p>' : ''}
         <div class="btns"><button type="button" class="btn outline" data-a="surge-check">Surge check d${(SHEET.surgeRule && SHEET.surgeRule.die) || 20}</button><button type="button" class="btn primary" data-a="surge-table">Surge table d100</button></div>
@@ -745,7 +761,7 @@
       const total = s.max + extra;
       const left = total - (live.slots[s.level] ?? 0);
       const dots = total <= 6
-        ? Array.from({ length: total }, (_, i) => `<i class="${i < left ? '' : 'used'}"></i>`).join('')
+        ? Array.from({ length: total }, (_, i) => `<i class="${i < total - left ? 'used' : ''}"></i>`).join('')
         : `<b>${left}/${total}</b>`;
       parts.push(`<span class="sg"><span class="sl">${ord(s.level)}</span><span class="sd">${dots}</span></span>`);
     }
@@ -756,6 +772,7 @@
     const sp = findUse(/Sorcery Points/);
     if (sp) parts.push(`<span class="sg"><span class="sl">SP</span><b class="spv">${sp.max - usedOf(sp.key)}</b></span>`);
     const tides = findUse(/^Tides of Chaos$/);
+    if (homebrew()) parts.push(`<span class="sg"><span class="sl">DC</span><b class="dcv">${S.wildDc || 5}</b></span>`);
     if (tides) {
       const ready = usedOf(tides.key) === 0;
       parts.push(`<span class="sg"><span class="sl">Tides</span><i class="tide${ready ? '' : ' used'}" aria-label="${ready ? 'ready' : 'used'}"></i></span>`);
@@ -918,12 +935,33 @@
     openSheet(`Cast ${s.name}`, s.higher ? 'Higher slots make it stronger' : '', opts || '<p class="empty">No slots for this spell.</p>');
   }
 
-  async function doCast(i, level, pact) {
+  async function doCast(i, level, pact, check) {
     const s = SHEET.spells[i];
     let r;
     try {
-      r = await act('cast', { spellKey: s.key, level: level === 'free' ? 'free' : Number(level), pact });
+      r = await act('cast', { spellKey: s.key, level: level === 'free' ? 'free' : Number(level), pact, check });
     } catch (e) {
+      return;
+    }
+    if (r.needCheck) {
+      // house rule: roll a d20 against the Wild Magic DC before the spell goes off
+      const attrs = `data-i="${i}" data-level="${esc(level)}" data-pact="${pact ? 1 : 0}"`;
+      openSheet(`Wild Magic DC ${r.dc}`, `Before ${s.name}: roll a d20`, `
+        <div class="amount" style="color:var(--accent)">${r.dc}</div>
+        <p class="hint" style="margin:0;text-align:center">${r.dc} or higher: the spell goes off and the DC goes up. Lower: surge, no spell, the slot stays free.</p>
+        <div class="btns"><button type="button" class="btn primary" data-a="cast-check" ${attrs} data-check="made">Made it</button><button type="button" class="btn danger" data-a="cast-check" ${attrs} data-check="failed">Failed</button></div>
+        <button type="button" class="btn" data-a="cast-check" ${attrs} data-check="roll">Roll for me</button>`);
+      return;
+    }
+    if (r.failed) {
+      const rolled = r.check && r.check.roll != null ? `You rolled ${r.check.roll} against DC ${r.check.dc}. ` : '';
+      openSheet('Wild Magic Surge!', `${s.name} does not go off`, `<p class="hint" style="margin:0">${rolled}The slot stays free. The DC is back to ${r.dc}.</p>${surgeHtml(r.table)}`);
+      return;
+    }
+    if (r.check) {
+      if (sheetIsOpen()) closeTop();
+      const rolled = r.check.roll != null ? `Rolled ${r.check.roll}: ` : '';
+      toast(`${rolled}${s.name} cast. Wild Magic DC is now ${r.dc}.`);
       return;
     }
     if (r.autoSurge) {
@@ -1064,6 +1102,9 @@
           <div class="field"><label for="add-url">Add a character (D&amp;D Beyond link, set to Public)</label><input id="add-url" class="input" type="url" placeholder="https://www.dndbeyond.com/characters/..."></div>
           <button type="button" class="btn outline" data-a="char-add" data-label="Add character">Add character</button>
           <p class="hint" style="margin:0">Each character has its own trackers, notes, in-character lines and Actions list. Style and size are shared.</p></section>
+        ${SHEET && SHEET.wildMagic ? `<section class="card" style="padding:0 .9rem">
+          <div class="setrow"><span class="t">Wild Magic house rules · ${esc(SHEET.name)}<small>DC check before spells with a slot, and Tides as Free to use / DM danger</small></span><button type="button" class="switch" role="switch" aria-checked="${Boolean(st.homebrewWild)}" data-a="toggle-homebrew" aria-label="Wild Magic house rules"><i></i></button></div>
+        </section>` : ''}
         <section class="sec"><div class="sec-h"><h2><label for="quotes">In-character lines${SHEET ? ` · ${esc(SHEET.name)}` : ''}</label></h2><span class="side">one per line</span></div>
           <textarea id="quotes" class="input" rows="5">${esc((st.quotes || []).join('\n'))}</textarea>
           <button type="button" class="btn" data-a="save-quotes">Save lines</button></section>
@@ -1251,6 +1292,14 @@
         if (sp) await act('use/set', { key: sp.key, used: Math.min(sp.max, Math.max(0, usedOf(sp.key) + Number(d.d))) });
         return undefined;
       }
+      case 'dc': {
+        const v = Math.min(20, Math.max(5, (S.wildDc || 5) + Number(d.d)));
+        return act('wild/dc', { dc: v });
+      }
+      case 'cast-check': return doCast(Number(d.i), d.level, d.pact === '1', d.check);
+      case 'toggle-homebrew':
+        await act('settings/set', { homebrewWild: !S.settings.homebrewWild });
+        return renderPage();
       case 'sp-from-slot': return slotPickDialog('from');
       case 'sp-to-slot': return slotPickDialog('to');
       case 'sp-go':

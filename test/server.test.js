@@ -102,6 +102,7 @@ test('full night: load, play, send back, verified', async () => {
   const sheet = r.data.sheet;
   assert.equal(sheet.name, 'Volo Gerddam');
 
+  await act('settings/set', { homebrewWild: false }); // this test plays by the 2024 rules
   const tides = sheet.uses.find((u) => u.name === 'Tides of Chaos').key;
   const misty = sheet.spells.find((s) => s.name === 'Misty Step');
   const shatter = sheet.spells.find((s) => s.name === 'Shatter');

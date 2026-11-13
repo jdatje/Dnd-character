@@ -145,6 +145,7 @@ function view() {
     activeNote: c.activeNote,
     surge: c.surge,
     actionPins: c.actionPins,
+    wildDc: c.wildDc,
     lastSync: c.lastSync,
     loadedAt: c.loadedAt,
     pending: S.diff(c, sh),
@@ -380,7 +381,7 @@ async function handle(req, res) {
             if (result === null) {
               if (type === 'settings/set' && LOOK_KEYS.some((k) => body[k] !== undefined)) S.applyLook(state, body);
               const c = cur();
-              const charPart = type === 'settings/set' ? (body.quotes !== undefined || body.acOverride !== undefined) : true;
+              const charPart = type === 'settings/set' ? (body.quotes !== undefined || body.acOverride !== undefined || body.homebrewWild !== undefined) : true;
               if (charPart) {
                 if (!c) throw new S.ActionError('Load a character first.');
                 result = S.apply(c, curSheet(), type, body);

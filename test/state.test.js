@@ -39,6 +39,7 @@ test('damage eats temp HP first; healing stops at max', () => {
 
 test('casting a Sorcerer spell with a slot offers a surge check', () => {
   const st = fresh();
+  st.settings.homebrewWild = false; // 2024 rules
   const shatter = sheet.spells.find((s) => s.name === 'Shatter');
   const r = S.apply(st, sheet, 'cast', { spellKey: shatter.key, level: 2 });
   assert.equal(st.live.slots[2], 2);
@@ -59,6 +60,7 @@ test('free cast uses the feat counter, no surge', () => {
 
 test('with Tides of Chaos spent the next slot spell surges for sure and Tides comes back', () => {
   const st = fresh();
+  st.settings.homebrewWild = false; // 2024 rules
   const tides = key(/^Tides of Chaos$/);
   S.apply(st, sheet, 'use/set', { key: tides, used: 1 });
   const ice = sheet.spells.find((s) => s.name === 'Ice Knife');
@@ -215,4 +217,79 @@ test('version 1 state moves into the first character', () => {
 test('descriptions from D&D Beyond are made safe', () => {
   const out = html.rich('<p style="color:red" onclick="x()">Use [action]Attack[/action] <a href="javascript:x">link</a></p><iframe src=x></iframe><table><tr><td>1</td></tr></table>');
   assert.equal(out, '<p>Use Attack link</p><table><tr><td>1</td></tr></table>');
+});
+
+test('house rule: Wild Magic DC check before spells with a slot', () => {
+  const st = fresh();
+  assert.equal(st.settings.homebrewWild, true, 'on for Volo');
+  assert.equal(st.wildDc, 5);
+  const shatter = sheet.spells.find((s) => s.name === 'Shatter');
+  const used = st.live.slots[2];
+  // first the app is asked for the check, nothing is spent yet
+  let r = S.apply(st, sheet, 'cast', { spellKey: shatter.key, level: 2 });
+  assert.deepEqual(r, { needCheck: true, dc: 5, spell: 'Shatter' });
+  assert.equal(st.live.slots[2], used);
+  // made it: slot used, DC +1
+  r = S.apply(st, sheet, 'cast', { spellKey: shatter.key, level: 2, check: 'made' });
+  assert.equal(st.live.slots[2], used + 1);
+  assert.equal(st.wildDc, 6);
+  assert.equal(r.offerCheck, undefined, 'no 2024 surge check');
+  assert.equal(r.autoSurge, undefined);
+  // failed: no slot, surge, DC back to 5
+  const ice = sheet.spells.find((s) => s.name === 'Ice Knife');
+  const used1 = st.live.slots[1];
+  r = S.apply(st, sheet, 'cast', { spellKey: ice.key, level: 1, check: 'failed' });
+  assert.equal(r.failed, true);
+  assert.ok(r.table.roll >= 1 && r.table.roll <= 100);
+  assert.equal(st.live.slots[1], used1, 'slot stays free');
+  assert.equal(st.wildDc, 5);
+  // DC stops at 20
+  st.wildDc = 20;
+  S.apply(st, sheet, 'cast', { spellKey: ice.key, level: 1, check: 'made' });
+  assert.equal(st.wildDc, 20);
+  // roll for me
+  st.wildDc = 5;
+  r = S.apply(st, sheet, 'cast', { spellKey: ice.key, level: 2, check: 'roll' });
+  assert.ok(r.check.roll >= 1 && r.check.roll <= 20);
+  assert.equal(r.check.made, r.check.roll >= 5);
+});
+
+test('house rule: cantrips and free casts are never checked', () => {
+  const st = fresh();
+  const fb = sheet.spells.find((s) => s.name === 'Fire Bolt');
+  assert.deepEqual(S.apply(st, sheet, 'cast', { spellKey: fb.key, level: 0 }), { cantrip: true });
+  const misty = sheet.spells.find((s) => s.name === 'Misty Step');
+  const r = S.apply(st, sheet, 'cast', { spellKey: misty.key, level: 'free' });
+  assert.equal(r.needCheck, undefined);
+  assert.equal(st.live.uses[misty.useKey], 1);
+  assert.equal(st.wildDc, 5);
+});
+
+test('house rule: Tides switch, DM surge brings it back, long rest resets the DC', () => {
+  const st = fresh();
+  const tides = key(/^Tides of Chaos$/);
+  S.apply(st, sheet, 'use/set', { key: tides, used: 1 });
+  const ice = sheet.spells.find((s) => s.name === 'Ice Knife');
+  const r = S.apply(st, sheet, 'cast', { spellKey: ice.key, level: 1, check: 'made' });
+  assert.equal(r.autoSurge, undefined, 'Tides used does not force a surge by itself');
+  assert.equal(st.live.uses[tides], 1);
+  const t = S.apply(st, sheet, 'surge/table', {});
+  assert.equal(t.tidesBack, true);
+  assert.equal(st.live.uses[tides], 0);
+  S.apply(st, sheet, 'wild/dc', { dc: 12 });
+  assert.throws(() => S.apply(st, sheet, 'wild/dc', { dc: 21 }), /DC/);
+  S.apply(st, sheet, 'rest/short', {});
+  assert.equal(st.wildDc, 12, 'short rest keeps the DC');
+  S.apply(st, sheet, 'rest/long', {});
+  assert.equal(st.wildDc, 5);
+});
+
+test('house rules off: back to the 2024 rules', () => {
+  const st = fresh();
+  S.apply(st, sheet, 'settings/set', { homebrewWild: false });
+  const shatter = sheet.spells.find((s) => s.name === 'Shatter');
+  const r = S.apply(st, sheet, 'cast', { spellKey: shatter.key, level: 2 });
+  assert.equal(r.offerCheck, true);
+  const other = S.normalizeChar({}, '42424242');
+  assert.equal(other.settings.homebrewWild, false, 'off for other characters');
 });
