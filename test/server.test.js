@@ -11,6 +11,21 @@ const path = require('path');
 
 const fixture = JSON.parse(fs.readFileSync(path.join(__dirname, 'fixtures/character.json'), 'utf8'));
 const COOKIE = 'good-cookie-value-1234567890abcdef';
+const GEMINI_KEY = 'AIzaTestKey_0123456789abcdefghij';
+const gem = {
+  calls: [],
+  scanAnswer: {
+    session: { number: 10, date: '7 feb' },
+    html: '<h3>Session 10</h3><ul><li><mark>Marshall Dunhan</mark> voor info Hogger</li><li>Chalybes in z\'n ballen getrapt door Billy<ul><li>→ ketting teruggegeven → 20 gp</li></ul></li></ul><div class="box">arcane traps</div><script>alert(1)</script>',
+    unsure: ['Marshall Dunhan'],
+    suggestions: [
+      { section: 'npcs', name: 'Marshal Dughan', text: 'Gaf informatie over Hogger.', op: 'add' },
+      { section: 'loot', name: '20 gp', text: 'Voor de teruggegeven ketting.', op: 'add' },
+      { section: 'where', name: 'Waar we gebleven zijn', text: 'Tweede verdieping van de toren, bij de spiegel.', op: 'add' },
+      { section: 'bogus', name: 'x', text: 'y' },
+    ],
+  },
+};
 
 // stand-in D&D Beyond: serves the character, hands out tokens, applies PUTs like the real sheet does
 const ddb = { char: JSON.parse(JSON.stringify(fixture)), puts: [], token: 'tok-123', refuse: new Set() };
@@ -22,6 +37,19 @@ const stub = http.createServer((req, res) => {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(data));
     };
+    if (req.url.startsWith('/gemini/')) {
+      if (req.headers['x-goog-api-key'] !== GEMINI_KEY) return json(400, { error: { message: 'API key not valid. Please pass a valid API key.' } });
+      if (req.method === 'GET' && req.url.startsWith('/gemini/models?')) {
+        return json(200, { models: [{ name: 'models/gemini-flash-latest', supportedGenerationMethods: ['generateContent'] }, { name: 'models/gemini-pro-latest', supportedGenerationMethods: ['generateContent'] }] });
+      }
+      const m = req.url.match(/^\/gemini\/models\/([^:]+):generateContent$/);
+      if (!m) return json(404, { error: { message: 'not found' } });
+      const b = JSON.parse(body);
+      gem.calls.push({ model: decodeURIComponent(m[1]), body: b });
+      const parts = b.contents[0].parts;
+      if (parts.some((x) => x.inline_data)) return json(200, { candidates: [{ content: { parts: [{ text: JSON.stringify(gem.scanAnswer) }] } }] });
+      return json(200, { candidates: [{ content: { parts: [{ text: 'Het gezelschap sprak Marshal Dughan.' }] } }] });
+    }
     if (req.url === '/auth' && req.method === 'POST') {
       if (req.headers.cookie === `CobaltSession=${COOKIE}`) return json(200, { token: ddb.token, ttl: 300 });
       return json(401, { message: 'no' });
@@ -66,6 +94,7 @@ test.before(async () => {
   const sp = stub.address().port;
   process.env.DDB_SERVICE = `http://127.0.0.1:${sp}`;
   process.env.DDB_AUTH_URL = `http://127.0.0.1:${sp}/auth`;
+  process.env.GEMINI_URL = `http://127.0.0.1:${sp}/gemini`;
   process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'dc-test-'));
   const { handle } = require('../server');
   app = http.createServer(handle);
@@ -221,4 +250,98 @@ test('more characters: add, switch, own trackers, remove', async () => {
   assert.equal(st.characters.length, 1);
   const res = await fetch(`${base}/avatar?id=24242424`);
   assert.equal(res.status, 404);
+});
+
+test('journal scan: key, read pages, check words, campaign summary, recap, cleanup', async () => {
+  const IMG = 'data:image/jpeg;base64,' + Buffer.from('fake jpeg bytes for the test').toString('base64');
+  let r = await call('/api/scan', { images: [IMG] });
+  assert.equal(r.status, 400);
+  assert.match(r.data.error, /Gemini API key/);
+
+  r = await call('/api/ai/key', { key: 'nope' });
+  assert.equal(r.status, 400);
+  r = await call('/api/ai/key', { key: 'AIzaWrongKey_0123456789abcdefghij' });
+  assert.equal(r.status, 502);
+  assert.match(r.data.error, /did not accept the API key/);
+  r = await call('/api/ai/key', { key: GEMINI_KEY });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  assert.equal(r.data.model, 'gemini-flash-latest');
+  let st = (await call('/api/state')).data;
+  assert.equal(st.ai.has, true);
+  assert.ok(!JSON.stringify(st).includes(GEMINI_KEY), 'the key never goes to the phone');
+
+  // party member: must reach the prompt as a PC
+  await act('party/save', { name: 'Chalybes', cls: 'Rogue', player: 'Sam' });
+  await act('campaign/set', { description: 'Inspired by World of Warcraft', words: ['Vallhyr', 'vallhyr', ' Dread Tower '] });
+  st = (await call('/api/state')).data;
+  assert.ok(st.campaign.words.includes('Vallhyr') && st.campaign.words.includes('Dread Tower'));
+  assert.equal(st.campaign.words.filter((w) => w.toLowerCase() === 'vallhyr').length, 1, 'no doubles');
+
+  r = await call('/api/scan', { images: [IMG, IMG] });
+  assert.equal(r.status, 200, JSON.stringify(r.data));
+  const prompt = gem.calls.at(-1).body.contents[0].parts[0].text;
+  assert.match(prompt, /Chalybes \(Rogue\), played by Sam/);
+  assert.match(prompt, /NEVER list them as NPCs/);
+  assert.match(prompt, /Inspired by World of Warcraft/);
+  assert.equal(gem.calls.at(-1).body.contents[0].parts.filter((x) => x.inline_data).length, 2);
+  const draft = r.data.draft;
+  assert.equal(draft.title, 'Session 10 – 7 feb');
+  assert.ok(!/script/.test(draft.html), 'cleaned');
+  assert.match(draft.html, /<mark>Marshall Dunhan<\/mark>/);
+  assert.match(draft.html, /<div class="box">/);
+  assert.equal(draft.suggestions.length, 3, 'unknown sections dropped');
+  assert.equal(draft.photos.length, 2);
+  let res = await fetch(`${base}/api/photo?id=${draft.photos[0]}`);
+  assert.equal(res.status, 200);
+  assert.equal(res.headers.get('content-type'), 'image/jpeg');
+
+  r = await call('/api/scan/save', { title: draft.title, html: draft.html });
+  assert.equal(r.status, 200);
+  const noteId = r.data.id;
+  st = (await call('/api/state')).data;
+  assert.equal(st.scanDraft, null);
+  let note = st.notes.find((n) => n.id === noteId);
+  assert.deepEqual(note.photos, draft.photos);
+  assert.equal(note.suggest.length, 3);
+
+  // check an unsure word: corrected and remembered
+  r = await act('mark/resolve', { noteId, index: 0, text: 'Marshal Dughan' });
+  assert.equal(r.status, 200);
+  st = (await call('/api/state')).data;
+  note = st.notes.find((n) => n.id === noteId);
+  assert.ok(!/<mark>/.test(note.html));
+  assert.match(note.html, /Marshal Dughan voor info Hogger/);
+  assert.ok(st.campaign.words.includes('Marshal Dughan'));
+
+  // accept two of the three suggestions, one edited
+  r = await act('suggest/apply', { noteId, accept: [
+    { section: 'npcs', name: 'Marshal Dughan', text: 'Marshal in Goldshire; gaf info over Hogger.' },
+    { section: 'where', name: 'Waar we gebleven zijn', text: 'Bij de spiegel.' },
+  ] });
+  assert.deepEqual(r.data.result, { added: 1, updated: 1 });
+  // the same NPC again later updates instead of doubling
+  await act('summary/save', { section: 'npcs', name: 'Billy', text: '' });
+  r = await act('suggest/apply', { noteId, accept: [{ section: 'npcs', name: 'marshal dughan', text: 'Nieuw.' }] });
+  st = (await call('/api/state')).data;
+  assert.equal(st.campaign.summary.npcs.length, 2);
+  assert.equal(st.campaign.summary.npcs[0].text, 'Nieuw.');
+  assert.equal(st.campaign.summary.where, 'Bij de spiegel.');
+  assert.deepEqual(st.notes.find((n) => n.id === noteId).suggest, []);
+
+  r = await call('/api/recap', { noteId });
+  assert.equal(r.status, 200);
+  st = (await call('/api/state')).data;
+  assert.equal(st.notes.find((n) => n.id === noteId).recap, 'Het gezelschap sprak Marshal Dughan.');
+
+  // a second scan thrown away removes its photos; deleting the note removes its photos
+  r = await call('/api/scan', { images: [IMG] });
+  const pid = r.data.draft.photos[0];
+  assert.equal(r.data.draft.title, 'Session 10 – 7 feb');
+  await call('/api/scan/discard', {});
+  assert.equal((await fetch(`${base}/api/photo?id=${pid}`)).status, 404);
+  await act('note/remove', { id: noteId });
+  assert.equal((await fetch(`${base}/api/photo?id=${draft.photos[0]}`)).status, 404);
+
+  r = await call('/api/scan', { images: ['data:text/html;base64,PHNjcmlwdD4='] });
+  assert.equal(r.status, 400);
 });

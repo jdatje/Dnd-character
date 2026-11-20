@@ -16,14 +16,19 @@ const path = require('path');
 const { buildSheet, SheetError } = require('./lib/sheet');
 const S = require('./lib/state');
 const ddb = require('./lib/ddb');
+const ai = require('./lib/ai');
+const crypto = require('crypto');
 
 const PORT = Number(process.env.PORT) || 3200;
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(__dirname, 'data'));
 const PUBLIC = path.join(__dirname, 'public');
 const CHARS = path.join(DATA_DIR, 'chars');
-const FILES = { state: path.join(DATA_DIR, 'state.json'), auth: path.join(DATA_DIR, 'ddb-auth.json') };
+const FILES = { state: path.join(DATA_DIR, 'state.json'), auth: path.join(DATA_DIR, 'ddb-auth.json'), ai: path.join(DATA_DIR, 'ai-auth.json') };
 const rawFile = (id) => path.join(CHARS, `${id}.json`);
 const imgFile = (id) => path.join(CHARS, `${id}.img`);
+// photos of journal pages: chars/<character id>-photos/<photo id>.jpg
+const photoDir = (id) => path.join(CHARS, `${id}-photos`);
+const photoFile = (id, pid) => path.join(photoDir(id), `${pid}.jpg`);
 fs.mkdirSync(CHARS, { recursive: true });
 
 // version of the phone app: changes whenever an update changes its files, so open phones know to reload
@@ -101,6 +106,7 @@ for (const id of state.order) {
   }
 }
 let auth = readJson(FILES.auth, null);
+let aiAuth = readJson(FILES.ai, null); // { key, model, savedAt }
 
 // one change at a time, so a slow D&D Beyond call never interleaves with taps on the phone
 let queue = Promise.resolve();
@@ -133,6 +139,7 @@ function view() {
     characters: state.order.map((id) => ({ id, name: state.chars[id].name || `Character ${id}`, classLine: state.chars[id].classLine || '' })),
     hasSheet: Boolean(sh),
     auth: { has: Boolean(auth && auth.cobalt), savedAt: auth ? auth.savedAt : null },
+    ai: { has: Boolean(aiAuth && aiAuth.key), model: (aiAuth && aiAuth.model) || ai.DEFAULT_MODEL, savedAt: aiAuth ? aiAuth.savedAt : null },
   };
   if (!c) return { ...base, settings: { ...state.look, characterUrl: '', quotes: [], acOverride: null }, live: null, baseline: null, custom: [], notes: [], activeNote: null, surge: { log: [] }, actionPins: {}, lastSync: null, loadedAt: null, pending: [] };
   return {
@@ -146,6 +153,8 @@ function view() {
     surge: c.surge,
     actionPins: c.actionPins,
     wildDc: c.wildDc,
+    campaign: c.campaign,
+    scanDraft: c.scanDraft,
     lastSync: c.lastSync,
     loadedAt: c.loadedAt,
     pending: S.diff(c, sh),
@@ -276,6 +285,140 @@ async function syncToDdb() {
   return { results, allOk: results.every((r) => r.ok) };
 }
 
+/* ---------- journal scanning ---------- */
+function needAi() {
+  if (!aiAuth || !aiAuth.key) throw new S.ActionError('Add your Gemini API key in Settings first.');
+  return aiAuth;
+}
+
+async function saveAiKey(body) {
+  if (body.remove) {
+    aiAuth = null;
+    await fsp.rm(FILES.ai, { force: true });
+    await save();
+    return { removed: true };
+  }
+  if (body.model !== undefined && body.key === undefined) {
+    needAi();
+    const m = String(body.model || '').trim();
+    if (!/^[a-z0-9][a-z0-9.\-]{2,60}$/i.test(m)) throw new S.ActionError('That does not look like a Gemini model name.');
+    aiAuth.model = m;
+    await writeJson(FILES.ai, aiAuth, 0o600);
+    await save();
+    return { model: m };
+  }
+  const key = String(body.key || '').trim();
+  if (!/^[A-Za-z0-9_\-]{20,200}$/.test(key)) throw new S.ActionError('That does not look like a Gemini API key (it usually starts with AIza).');
+  const r = await ai.checkKey(key);
+  aiAuth = { key, model: (aiAuth && aiAuth.model && r.models.includes(aiAuth.model)) ? aiAuth.model : r.suggested, savedAt: Date.now() };
+  await writeJson(FILES.ai, aiAuth, 0o600);
+  await save();
+  return { model: aiAuth.model };
+}
+
+function contextFor(c) {
+  const sh = sheetOf(c.id);
+  return { ...c.campaign, selfName: sh ? sh.name : c.name };
+}
+
+/** Next session number: one more than the highest "Session N" note title. */
+function nextSession(c) {
+  let n = 0;
+  for (const x of c.notes) {
+    const m = String(x.title).match(/^Session\s+(\d+)/i);
+    if (m) n = Math.max(n, Number(m[1]));
+  }
+  return n + 1;
+}
+
+const scanning = new Set();
+async function scan(body) {
+  const c = cur();
+  if (!c) throw new S.ActionError('Load a character first.');
+  const key = needAi();
+  const imgs = Array.isArray(body.images) ? body.images : [];
+  if (!imgs.length) throw new S.ActionError('Add a photo of a page first.');
+  if (imgs.length > 8) throw new S.ActionError('At most 8 pages at once.');
+  const images = imgs.map((d) => {
+    const m = String(d).match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
+    if (!m) throw new S.ActionError('One of the photos could not be read. Try taking it again.');
+    return { mime: m[1], data: m[2] };
+  });
+  if (scanning.has(c.id)) throw new S.ActionError('Already reading pages for this character. Wait a moment.');
+  scanning.add(c.id);
+  let out;
+  try {
+    out = await ai.scanPages(key.key, key.model, images, contextFor(c));
+  } finally {
+    scanning.delete(c.id);
+  }
+  return locked(async () => {
+    // keep the photos (only now that reading worked)
+    await fsp.mkdir(photoDir(c.id), { recursive: true });
+    const photos = [];
+    for (const im of images) {
+      const pid = crypto.randomBytes(8).toString('hex');
+      await fsp.writeFile(photoFile(c.id, pid), Buffer.from(im.data, 'base64'));
+      photos.push(pid);
+    }
+    if (c.scanDraft && c.scanDraft.photos) for (const pid of c.scanDraft.photos) await fsp.rm(photoFile(c.id, pid), { force: true });
+    const num = out.session.number || nextSession(c);
+    const date = out.session.date || new Date().toLocaleDateString('nl-NL', { day: 'numeric', month: 'short' }).replace('.', '');
+    c.scanDraft = {
+      at: Date.now(),
+      photos,
+      title: `Session ${num} – ${date}`.slice(0, 40),
+      html: require('./lib/html').note(out.html),
+      unsure: out.unsure,
+      suggestions: out.suggestions.map((x) => ({ ...x, id: crypto.randomBytes(4).toString('hex') })),
+    };
+    await save();
+    return { draft: c.scanDraft };
+  });
+}
+
+async function saveScan(body) {
+  const c = cur();
+  if (!c || !c.scanDraft) throw new S.ActionError('There is no scan to save (maybe saved on another device).');
+  const d = c.scanDraft;
+  const r = S.apply(c, curSheet(), 'note/add', { title: body.title || d.title, html: body.html !== undefined ? body.html : d.html });
+  const n = c.notes.find((x) => x.id === r.id);
+  n.photos = d.photos;
+  n.scanned = true;
+  n.suggest = d.suggestions;
+  c.scanDraft = null;
+  await save();
+  return { id: n.id };
+}
+
+async function discardScan() {
+  const c = cur();
+  if (!c || !c.scanDraft) return { nothing: true };
+  for (const pid of c.scanDraft.photos || []) await fsp.rm(photoFile(c.id, pid), { force: true });
+  c.scanDraft = null;
+  await save();
+  return {};
+}
+
+async function makeRecap(body) {
+  const c = cur();
+  if (!c) throw new S.ActionError('Load a character first.');
+  const key = needAi();
+  const n = c.notes.find((x) => x.id === body.noteId);
+  if (!n) throw new S.ActionError('That note no longer exists.');
+  const { plain } = require('./lib/html');
+  const text = plain(String(n.html).replace(/<\/(li|p|h3|div|tr)>/g, '\n'), 20000);
+  const r = await ai.recap(key.key, key.model, text, contextFor(c));
+  return locked(async () => {
+    const again = c.notes.find((x) => x.id === body.noteId);
+    if (again) {
+      again.recap = r;
+      await save();
+    }
+    return { recap: r };
+  });
+}
+
 /** Changes that are not about one character's trackers: the look, and the list of characters. */
 async function rootAct(type, p) {
   if (type === 'char/switch') {
@@ -289,6 +432,7 @@ async function rootAct(type, p) {
     state.order = state.order.filter((x) => x !== p.id);
     sheets.delete(p.id);
     for (const f of [rawFile(p.id), imgFile(p.id), `${imgFile(p.id)}.json`]) await fsp.rm(f, { force: true });
+    await fsp.rm(photoDir(p.id), { recursive: true, force: true });
     if (state.active === p.id) state.active = state.order[0] || null;
     return {};
   }
@@ -343,6 +487,18 @@ async function handle(req, res) {
       const s = c.settings.acOverride != null ? { ...sh, ac: c.settings.acOverride, acOverridden: true } : sh;
       return ok(res, { sheetKey: sheetKey(), sheet: s });
     }
+    if (p === '/api/photo' && req.method === 'GET') {
+      const id = url.searchParams.get('char') || state.active;
+      const pid = url.searchParams.get('id') || '';
+      if (!/^\d{4,12}$/.test(String(id)) || !/^[0-9a-f]{16}$/.test(pid)) return send(res, 400, 'Bad request');
+      try {
+        const buf = await fsp.readFile(photoFile(id, pid));
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'private, max-age=31536000, immutable' });
+        return res.end(buf);
+      } catch (e) {
+        return send(res, 404, 'No photo');
+      }
+    }
     if (p === '/avatar' && req.method === 'GET') {
       const id = /^\d{4,12}$/.test(url.searchParams.get('id') || '') ? url.searchParams.get('id') : state.active;
       try {
@@ -368,7 +524,7 @@ async function handle(req, res) {
     if (req.method === 'POST' && p.startsWith('/api/')) {
       let body;
       try {
-        body = await readBody(req);
+        body = await readBody(req, p === '/api/scan' ? 30_000_000 : 1_500_000);
       } catch (e) {
         return err(res, 400, e.message === 'too big' ? 'That is too much text at once.' : 'The app sent something garbled.');
       }
@@ -377,6 +533,7 @@ async function handle(req, res) {
           try {
             const type = String(body.type || '');
             const before = JSON.stringify(state);
+            const goneNote = type === 'note/remove' && cur() ? cur().notes.find((n) => n.id === body.id) : null;
             let result = await rootAct(type, body);
             if (result === null) {
               if (type === 'settings/set' && LOOK_KEYS.some((k) => body[k] !== undefined)) S.applyLook(state, body);
@@ -388,6 +545,7 @@ async function handle(req, res) {
               } else result = {};
             }
             if (JSON.stringify(state) !== before) await save();
+            if (goneNote && goneNote.photos) for (const pid of goneNote.photos) await fsp.rm(photoFile(cur().id, pid), { force: true });
             return ok(res, { result, rev: state.rev });
           } catch (e) {
             if (e instanceof S.ActionError) return err(res, 400, e.message);
@@ -405,6 +563,11 @@ async function handle(req, res) {
         });
       }
       if (p === '/api/sync') return await locked(async () => ok(res, await syncToDdb()));
+      if (p === '/api/ai/key') return await locked(async () => ok(res, await saveAiKey(body)));
+      if (p === '/api/scan') return ok(res, await scan(body));
+      if (p === '/api/scan/save') return await locked(async () => ok(res, await saveScan(body)));
+      if (p === '/api/scan/discard') return await locked(async () => ok(res, await discardScan()));
+      if (p === '/api/recap') return ok(res, await makeRecap(body));
       if (p === '/api/ddb/cookie') {
         return await locked(async () => {
           if (body.remove) {
@@ -435,7 +598,8 @@ async function handle(req, res) {
     if (req.method !== 'GET' && req.method !== 'HEAD') return send(res, 405, 'Method not allowed');
     return await serveStatic(req, res, p);
   } catch (e) {
-    if (e instanceof ddb.DdbError || e instanceof SheetError) return err(res, 502, e.message, { code: e.code });
+    if (e instanceof ddb.DdbError || e instanceof SheetError || e instanceof ai.AiError) return err(res, 502, e.message, { code: e.code });
+    if (e instanceof S.ActionError) return err(res, 400, e.message);
     console.error(e);
     return err(res, 500, 'Something went wrong on the server. The log has the details.');
   }

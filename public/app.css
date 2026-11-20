@@ -329,3 +329,29 @@ input[type=range] { width: 100%; accent-color: var(--accent); height: 2.75rem; }
 .charrow .t b { display: block; font-size: .95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .charrow .t span { font-size: .78rem; color: var(--muted); }
 button.charrow { all: unset; display: flex; align-items: center; gap: .7rem; min-height: 3.6rem; width: 100%; cursor: pointer; border-top: 1px solid var(--line2); }
+
+/* journal scanning */
+.thumbs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
+.thumb { position: relative; padding: 0; border: 1px solid var(--line); border-radius: .6rem; overflow: hidden; background: var(--surface); aspect-ratio: 3 / 4; }
+.thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.thumb-x { position: absolute; top: .25rem; right: .25rem; width: 2rem; height: 2rem; border-radius: 50%; border: none; background: rgba(0, 0, 0, .65); color: #fff; display: flex; align-items: center; justify-content: center; padding: 0; }
+.thumb-x svg { width: 1rem; height: 1rem; }
+.page-photo { width: 100%; border-radius: .75rem; border: 1px solid var(--line); display: block; }
+label.btn { cursor: pointer; }
+.note-ed mark, .qmark { background: none; color: inherit; font-weight: 700; }
+.note-ed mark::after, .qmark::after { content: '?'; color: var(--accent); font-weight: 700; }
+.note-ed mark { cursor: pointer; border-bottom: 2px dotted var(--accent); }
+.note-ed .box, .rich .box { border: 1.5px solid var(--muted); border-radius: .5rem; padding: .3rem .6rem; margin: .3rem 0; }
+.note-ed table { border-collapse: collapse; margin: .3rem 0; }
+.note-ed td { border: 1px solid var(--line); padding: .2rem .5rem; }
+.scan-ed { min-height: 14rem; }
+.recap { padding: .7rem .8rem; font-size: .9rem; }
+.sugg { display: flex; flex-direction: column; gap: .35rem; padding: .6rem 0; border-top: 1px solid var(--line2); }
+.sugg:first-child { border-top: none; }
+.sugg-top { display: flex; align-items: center; gap: .45rem; }
+.sugg-top input { width: 1.25rem; height: 1.25rem; accent-color: var(--accent); }
+.sugg textarea.input { min-height: 3.6rem; }
+.sum-item { all: unset; display: flex; width: 100%; box-sizing: border-box; padding: .55rem 0; border-bottom: 1px solid var(--line2); cursor: pointer; }
+.sum-item:last-child { border-bottom: none; }
+.btn svg { width: 1.2rem; height: 1.2rem; flex: none; }
+.pb > .note-ed, .scan-ed { flex: none; }

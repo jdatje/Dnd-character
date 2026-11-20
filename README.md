@@ -20,6 +20,14 @@ Separate from the DM dashboard, but runs next to it on the home server. No npm p
 - **Settings**: six styles, size slider (80–130%), in-character line on/off, keep screen on, characters, login cookie for sending back, AC by hand.
 - Works on several devices at once (changes show up everywhere) and can be added to the phone's home screen.
 
+## Scanning journal pages
+
+Notes › **Scan journal pages**: photograph the handwritten pages of one session. Google Gemini reads them and the app makes a faithful digital copy (one note per session, photos kept next to it). Words it is unsure about show **bold with a ?** until you tap and check them; checked names go to the campaign word list so the next scan reads them right.
+
+After saving, the app suggests updates for **Campaign** (Other › Campaign): quests, NPCs, places, loot & rewards, buffs & effects and where you left off, in Dutch. You tick what to keep. Fill in the **Party** (characters and players) so other PCs are never listed as NPCs, and a one-line campaign description under **Word list**. A scanned note can also get a short Dutch recap (note menu ⋯).
+
+Needs a Gemini API key from Google AI Studio: paste it in Settings › Reading journal pages. It is stored only on the server (`ai-auth.json`), never sent to the phone. On the free tier Google may use what you send to improve its products.
+
 ## Sending changes back to D&D Beyond
 
 D&D Beyond has no official API for this. The app does what D&D Beyond's own character sheet does: it trades your

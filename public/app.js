@@ -38,6 +38,8 @@
     bag: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M5 8h14l-1 13H6z"/><path d="M9 8V6a3 3 0 0 1 6 0v2"/></svg>',
     shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/></svg>',
     tools: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 6l4 4M4 20l9-9M15 3l6 6-3 3-6-6z"/></svg>',
+    map: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4L3 6v14l6-2 6 2 6-2V4l-6 2z"/><path d="M9 4v14M15 6v14"/></svg>',
+    camera: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>',
     scroll: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 4h11a2 2 0 0 1 0 4H7z"/><path d="M7 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10V8"/><path d="M10 12h5M10 16h4"/></svg>',
   };
 
@@ -410,7 +412,8 @@
   }
 
   const OTHER = [
-    { id: 'notes', name: 'Notes', sub: 'Your own notes', icon: ICON.notes },
+    { id: 'notes', name: 'Notes', sub: 'Your notes and scanned sessions', icon: ICON.notes },
+    { id: 'campaign', name: 'Campaign', sub: 'Summary, party, word list', icon: ICON.map },
     { id: 'inventory', name: 'Inventory', sub: 'Items and money', icon: ICON.bag },
     { id: 'defenses', name: 'Speed & Defences', sub: 'Movement, resistances', icon: ICON.shield },
     { id: 'profs', name: 'Proficiencies', sub: 'Armor, weapons, tools, languages', icon: ICON.tools },
@@ -425,6 +428,7 @@
     const head = `<div class="subhead"><button type="button" class="icon-btn plain" data-a="other-menu" aria-label="Back to Other">${ICON.back}</button><h2>${esc(o.name)}</h2></div>`;
     let body = '';
     if (o.id === 'notes') body = renderNotes();
+    if (o.id === 'campaign') body = renderCampaign();
     if (o.id === 'inventory') body = renderInventory();
     if (o.id === 'defenses') body = renderDefenses();
     if (o.id === 'profs') body = renderProfs();
@@ -474,14 +478,29 @@
 
   function renderNotes() {
     const notes = S.notes || [];
+    const scanBar = S.scanDraft
+      ? `<button type="button" class="row" data-a="scan-open"><span class="main"><span class="name" style="display:block">A scan is waiting to be checked</span><span class="meta">${esc(S.scanDraft.title)}</span></span><span class="tag acc">Check</span></button>`
+      : `<button type="button" class="btn outline" data-a="scan-open">${ICON.camera} Scan journal pages</button>`;
     if (!notes.length) {
-      return `<div class="empty"><p>No notes yet.</p><button type="button" class="btn primary" data-a="note-new">New note</button></div>`;
+      return `${scanBar}<div class="empty"><p>No notes yet.</p><button type="button" class="btn primary" data-a="note-new">New note</button></div>`;
     }
     const active = notes.find((n) => n.id === S.activeNote) || notes[0];
     NOTE.id = active.id;
     NOTE.last = active.html;
     const chips = notes.map((n) => `<button type="button" class="nchip" data-a="note-pick" data-id="${n.id}" aria-pressed="${n.id === active.id}">${esc(n.title)}</button>`).join('');
-    return `<div class="notes">
+    const marks = (active.html.match(/<mark>/g) || []).length;
+    const photos = active.photos && active.photos.length;
+    const showPhoto = photos && UI.notePhoto === active.id;
+    let extra = '';
+    if (active.suggest && active.suggest.length) extra += `<button type="button" class="row" data-a="sugg-open" data-note="${esc(active.id)}"><span class="main"><span class="name" style="display:block">${active.suggest.length} suggestion${active.suggest.length > 1 ? 's' : ''} for the campaign summary</span></span><span class="tag acc">Review</span></button>`;
+    if (photos) extra += `<div class="seg"><button type="button" data-a="note-view" data-v="text" aria-pressed="${!showPhoto}">Text</button><button type="button" data-a="note-view" data-v="photo" aria-pressed="${Boolean(showPhoto)}">Photo${photos > 1 ? 's' : ''}</button></div>`;
+    if (active.recap) extra += `<div class="card recap"><span class="lab">Recap (AI)</span><p style="margin:.2rem 0 0">${esc(active.recap)}</p></div>`;
+    if (marks && !showPhoto) extra += `<p class="hint" style="margin:0"><b>${marks}</b> word${marks > 1 ? 's' : ''} still to check: tap the ones marked <b class="qmark">like this</b>.</p>`;
+    if (showPhoto) {
+      return `<div class="notes">${scanBar}<div class="note-chips" role="tablist" aria-label="Your notes">${chips}<button type="button" class="nchip add" data-a="note-new" aria-label="New note">+</button></div>${extra}
+        ${active.photos.map((pid) => `<img class="page-photo" src="${photoUrl(pid)}" alt="Journal page">`).join('')}</div>`;
+    }
+    return `<div class="notes">${scanBar}
       <div class="note-chips" role="tablist" aria-label="Your notes">${chips}<button type="button" class="nchip add" data-a="note-new" aria-label="New note">+</button></div>
       <div class="note-tools">
         <button type="button" class="btn" data-a="note-fmt" data-f="bold" aria-label="Bold"><b>B</b></button>
@@ -491,6 +510,7 @@
         <span class="status" id="note-status">${NOTE.status || 'Saved'}</span>
         <button type="button" class="icon-btn plain" data-a="note-menu" aria-label="Rename, move or delete this note">${ICON.more}</button>
       </div>
+      ${extra}
       <div class="note-ed" id="note-ed" contenteditable="true" spellcheck="true" data-ph="Write anything: names, clues, loot… (- list, [] checkbox, # heading)" aria-label="${esc(active.title)}">${active.html}</div>
     </div>`;
   }
@@ -644,6 +664,15 @@
     ed.addEventListener('blur', () => {
       if (NOTE.dirty) saveNote();
     });
+    ed.addEventListener('click', async (e) => {
+      const mk = e.target.closest && e.target.closest('mark');
+      if (!mk || !ed.contains(mk)) return;
+      e.preventDefault();
+      const index = [...ed.querySelectorAll('mark')].indexOf(mk);
+      if (NOTE.dirty) await saveNote();
+      ed.blur();
+      markDialog(NOTE.id, index, mk.textContent);
+    });
     ed.addEventListener('pointerdown', (e) => {
       const li = e.target.closest && e.target.closest('ul.chk > li');
       if (!li || !ed.contains(li)) return;
@@ -665,6 +694,207 @@
   function editingNote() {
     const ed = $('#note-ed');
     return ed && document.activeElement === ed;
+  }
+
+  /* ---------- journal scanning: scan page, review, suggestions, campaign ---------- */
+  const SECTION_LABEL = { quests: 'Quests', npcs: 'NPCs', places: 'Places', loot: 'Loot & rewards', effects: 'Buffs & effects', where: 'Where we left off' };
+  const SCAN = { pages: [], busy: false };
+
+  /** Shrinks a photo on the phone before it is sent: long side 1600 px, JPEG. Keeps uploads small and fast. */
+  async function photoToDataUrl(file) {
+    let src;
+    try {
+      src = await createImageBitmap(file, { imageOrientation: 'from-image' });
+    } catch (e) {
+      src = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => reject(new Error('That photo could not be opened.'));
+        img.src = URL.createObjectURL(file);
+      });
+    }
+    const w = src.width || src.naturalWidth;
+    const h = src.height || src.naturalHeight;
+    const scale = Math.min(1, 1600 / Math.max(w, h));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(w * scale);
+    cv.height = Math.round(h * scale);
+    cv.getContext('2d').drawImage(src, 0, 0, cv.width, cv.height);
+    return cv.toDataURL('image/jpeg', 0.85);
+  }
+
+  async function addScanFiles(files) {
+    for (const f of [...files].slice(0, 8 - SCAN.pages.length)) {
+      try {
+        SCAN.pages.push(await photoToDataUrl(f));
+      } catch (e) {
+        toast(e.message || 'That photo could not be opened.', 'error');
+      }
+    }
+    renderPage(true);
+  }
+
+  const photoUrl = (pid) => `/api/photo?char=${encodeURIComponent(S.active)}&id=${encodeURIComponent(pid)}`;
+
+  function renderScan() {
+    const d = S.scanDraft;
+    const back = `<button type="button" class="icon-btn plain" data-a="page-close" aria-label="Back">${ICON.back}</button>`;
+    if (!S.ai || !S.ai.has) {
+      return `<div class="page" role="dialog" aria-label="Scan journal"><div class="ph">${back}<h1>Scan journal</h1></div>
+        <div class="pb"><div class="card" style="padding:1rem;display:flex;flex-direction:column;gap:.7rem">
+          <p style="margin:0">To read your handwriting the app uses Gemini. Add your Gemini API key in Settings first.</p>
+          <button type="button" class="btn primary" data-a="settings">Open Settings</button></div></div></div>`;
+    }
+    if (d) {
+      const n = (d.html.match(/<mark>/g) || []).length;
+      return `<div class="page" role="dialog" aria-label="Check the scan"><div class="ph">${back}<h1>Check the scan</h1></div>
+        <div class="pb">
+          <div class="thumbs">${d.photos.map((pid, i) => `<button type="button" class="thumb" data-a="photo-view" data-pid="${esc(pid)}" aria-label="Page ${i + 1}"><img src="${photoUrl(pid)}" alt=""></button>`).join('')}</div>
+          <div class="field"><label for="scan-title">Note name</label><input id="scan-title" class="input" maxlength="40" value="${esc(d.title)}"></div>
+          <p class="hint" style="margin:0">${n ? `<b>${n}</b> word${n > 1 ? 's' : ''} the AI was not sure about ${n > 1 ? 'are' : 'is'} bold with a question mark, <b class="qmark">like this</b>. Fix them here by typing, or later by tapping them in the note.` : 'The AI was sure about every word. Check it against the photo anyway.'}</p>
+          <div class="note-ed scan-ed" id="scan-ed" contenteditable="true" spellcheck="false" aria-label="Text of the scanned pages">${d.html}</div>
+          ${d.suggestions.length ? `<p class="hint" style="margin:0">After saving you can add ${d.suggestions.length} suggestion${d.suggestions.length > 1 ? 's' : ''} to the campaign summary.</p>` : ''}
+        </div>
+        <div class="pf"><button type="button" class="btn primary" data-a="scan-save">Save as note</button><button type="button" class="btn danger" data-a="scan-discard">Throw away</button></div></div>`;
+    }
+    const thumbs = SCAN.pages.map((u, i) => `<div class="thumb"><img src="${u}" alt="Page ${i + 1}"><button type="button" class="thumb-x" data-a="scan-remove" data-i="${i}" aria-label="Remove page ${i + 1}">${ICON.close}</button></div>`).join('');
+    return `<div class="page" role="dialog" aria-label="Scan journal"><div class="ph">${back}<h1>Scan journal</h1></div>
+      <div class="pb">
+        <p class="hint" style="margin:0">Photograph the pages of one session, in order. Straight from above, in good light, the whole page in view.</p>
+        <div class="btns">
+          <label class="btn outline">Take photo<input type="file" accept="image/*" capture="environment" data-scan-input hidden></label>
+          <label class="btn">From gallery<input type="file" accept="image/*" multiple data-scan-input hidden></label>
+        </div>
+        ${SCAN.pages.length ? `<div class="thumbs">${thumbs}</div>` : '<div class="empty">No pages yet.</div>'}
+        <p class="hint" style="margin:0">The photos go to Google Gemini to be read (free tier: Google may use them to improve its products).</p>
+      </div>
+      <div class="pf"><button type="button" class="btn primary" data-a="scan-go" ${SCAN.pages.length && !SCAN.busy ? '' : 'disabled'}>${SCAN.busy ? 'Reading your handwriting… (up to a minute)' : `Read ${SCAN.pages.length || ''} page${SCAN.pages.length === 1 ? '' : 's'}`}</button></div></div>`;
+  }
+
+  async function scanGo() {
+    if (!SCAN.pages.length || SCAN.busy) return;
+    SCAN.busy = true;
+    renderPage(true);
+    try {
+      await api('/api/scan', { images: SCAN.pages });
+      SCAN.pages = [];
+      await refresh();
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+    SCAN.busy = false;
+    renderPage(true);
+  }
+
+  async function scanSave() {
+    const ed = $('#scan-ed');
+    try {
+      const r = await api('/api/scan/save', { title: $('#scan-title').value, html: ed ? ed.innerHTML : undefined });
+      UI.tab = 'other';
+      UI.other = 'notes';
+      LS.set('tab', UI.tab);
+      LS.set('other', UI.other);
+      await act('note/active', { id: r.id });
+      closeTop();
+      toast('Saved as a note');
+      setTimeout(() => {
+        const n = S.notes.find((x) => x.id === r.id);
+        if (n && n.suggest && n.suggest.length) suggestDialog(n.id);
+      }, 350);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  function suggestDialog(noteId) {
+    const n = S.notes.find((x) => x.id === noteId);
+    if (!n || !n.suggest || !n.suggest.length) return;
+    const rows = n.suggest.map((s, i) => `<div class="sugg" data-sugg="${i}" data-section="${esc(s.section)}">
+        <label class="sugg-top"><input type="checkbox" checked data-sugg-on><span class="tag">${esc(SECTION_LABEL[s.section] || s.section)}</span>${s.op === 'update' ? '<span class="tag acc">update</span>' : '<span class="tag">new</span>'}</label>
+        ${s.section === 'where' ? '' : `<input class="input" data-sugg-name value="${esc(s.name)}" aria-label="Name">`}
+        <textarea class="input" data-sugg-text rows="2" aria-label="Text">${esc(s.text)}</textarea>
+      </div>`).join('');
+    openSheet('Campaign summary', `${n.suggest.length} suggestion${n.suggest.length > 1 ? 's' : ''} from ${n.title}. Untick what you don't want, fix what's wrong.`, `
+      ${rows}
+      <button type="button" class="btn primary" data-a="sugg-apply" data-note="${esc(n.id)}">Add ticked to the campaign</button>
+      <button type="button" class="btn" data-a="sugg-skip" data-note="${esc(n.id)}">Skip all</button>`);
+  }
+
+  function markDialog(noteId, index, text) {
+    openSheet('Check this word', 'Confirm it, or type how it should be', `
+      <div class="field"><label for="mark-text">Word or name</label><input id="mark-text" class="input" value="${esc(text)}" autocomplete="off"></div>
+      <label class="check" style="border:none;min-height:auto"><input type="checkbox" id="mark-remember" checked><span class="t"><b>Add to the word list</b><span>So the next scan reads it right</span></span></label>
+      <button type="button" class="btn primary" data-a="mark-ok" data-note="${esc(noteId)}" data-i="${index}">Save</button>`);
+  }
+
+  function renderCampaign() {
+    const c = S.campaign || { party: [], words: [], summary: {} };
+    const tab = UI.campTab || 'summary';
+    const seg = [['summary', 'Summary'], ['party', 'Party'], ['words', 'Word list']].map(([k, l]) => `<button type="button" data-a="camp-tab" data-v="${k}" aria-pressed="${tab === k}">${l}</button>`).join('');
+    let body = '';
+    if (tab === 'summary') {
+      const waiting = (S.notes || []).filter((n) => n.suggest && n.suggest.length);
+      body += waiting.map((n) => `<button type="button" class="row" data-a="sugg-open" data-note="${esc(n.id)}"><span class="main"><span class="name" style="display:block">${n.suggest.length} suggestion${n.suggest.length > 1 ? 's' : ''} waiting</span><span class="meta">from ${esc(n.title)}</span></span><span class="tag acc">Review</span></button>`).join('');
+      const s = c.summary || {};
+      body += `<section class="sec"><div class="sec-h"><h2>Where we left off</h2></div>
+        <button type="button" class="card" style="padding:.8rem;text-align:left;width:100%" data-a="sum-edit" data-section="where">${s.where ? esc(s.where) : '<span class="muted">Not filled in yet. Tap to write it.</span>'}</button></section>`;
+      for (const k of ['quests', 'npcs', 'places', 'loot', 'effects']) {
+        const list = s[k] || [];
+        body += `<section class="sec"><div class="sec-h"><h2>${SECTION_LABEL[k]}</h2><button type="button" class="btn small" data-a="sum-edit" data-section="${k}">+ Add</button></div>
+          ${list.length ? `<div class="list">${list.map((it) => `<button type="button" class="li sum-item" data-a="sum-edit" data-section="${k}" data-id="${esc(it.id)}"><span class="n"><b>${esc(it.name)}</b>${it.text ? `<br><span class="hint">${esc(it.text)}</span>` : ''}</span></button>`).join('')}</div>` : '<p class="hint" style="margin:0">Nothing yet.</p>'}</section>`;
+      }
+    } else if (tab === 'party') {
+      body += `<p class="hint" style="margin:0">The player characters in this campaign, so scans never mistake them for NPCs.</p>
+        <div class="list">${c.party.length ? c.party.map((p) => `<button type="button" class="li sum-item" data-a="party-edit" data-id="${esc(p.id)}"><span class="n"><b>${esc(p.name)}</b>${p.cls ? ` · ${esc(p.cls)}` : ''}${p.player ? `<br><span class="hint">played by ${esc(p.player)}</span>` : ''}</span></button>`).join('') : '<div class="li"><span class="n muted">No one yet.</span></div>'}</div>
+        <button type="button" class="btn outline" data-a="party-edit">+ Add party member</button>`;
+    } else {
+      body += `<div class="field"><label for="camp-desc">About this campaign</label><textarea id="camp-desc" class="input" rows="3" placeholder="For example: inspired by World of Warcraft, around Elwynn Forest">${esc(c.description || '')}</textarea></div>
+        <p class="hint" style="margin:0">Helps the AI read names it may know from the setting.</p>
+        <div class="field"><label for="camp-words">Names, places and abbreviations (one per line)</label><textarea id="camp-words" class="input" rows="10" placeholder="Anchorwatch&#10;Aethelgard&#10;BER">${esc((c.words || []).join('\n'))}</textarea></div>
+        <p class="hint" style="margin:0">${(c.words || []).length} words. Words you check in scanned notes are added here by themselves.</p>
+        <button type="button" class="btn primary" data-a="camp-words-save">Save</button>`;
+    }
+    return `<div class="seg" style="margin-bottom:.2rem">${seg}</div>${body}`;
+  }
+
+  function summaryDialog(section, id) {
+    const c = S.campaign;
+    if (section === 'where') {
+      return openSheet('Where we left off', '', `<textarea id="sum-text" class="input" rows="4">${esc(c.summary.where || '')}</textarea>
+        <button type="button" class="btn primary" data-a="sum-save" data-section="where">Save</button>`);
+    }
+    const it = id ? c.summary[section].find((x) => x.id === id) : null;
+    openSheet(it ? it.name : `New in ${SECTION_LABEL[section]}`, SECTION_LABEL[section], `
+      <div class="field"><label for="sum-name">Name</label><input id="sum-name" class="input" maxlength="80" value="${esc(it ? it.name : '')}"></div>
+      <div class="field"><label for="sum-text">Notes</label><textarea id="sum-text" class="input" rows="4">${esc(it ? it.text : '')}</textarea></div>
+      <button type="button" class="btn primary" data-a="sum-save" data-section="${esc(section)}" data-id="${esc(id || '')}">Save</button>
+      ${it ? `<button type="button" class="btn danger" data-a="sum-del" data-section="${esc(section)}" data-id="${esc(id)}">Delete</button>` : ''}`);
+  }
+
+  function partyDialog(id) {
+    const p = id ? S.campaign.party.find((x) => x.id === id) : null;
+    openSheet(p ? p.name : 'New party member', 'A player character in this campaign', `
+      <div class="field"><label for="pt-name">Character name</label><input id="pt-name" class="input" maxlength="60" value="${esc(p ? p.name : '')}"></div>
+      <div class="field"><label for="pt-cls">Class (optional)</label><input id="pt-cls" class="input" maxlength="60" value="${esc(p ? p.cls : '')}"></div>
+      <div class="field"><label for="pt-player">Played by (optional)</label><input id="pt-player" class="input" maxlength="60" value="${esc(p ? p.player : '')}"></div>
+      <button type="button" class="btn primary" data-a="party-save" data-id="${esc(id || '')}">Save</button>
+      ${p ? `<button type="button" class="btn danger" data-a="party-del" data-id="${esc(id)}">Remove</button>` : ''}`);
+  }
+
+  function aiSettings() {
+    const a = S.ai || {};
+    if (a.has) {
+      return `<p class="hint" style="margin:0">Gemini key saved ${a.savedAt ? new Date(a.savedAt).toLocaleDateString() : ''}. Used to read your journal pages.</p>
+        <div class="field"><label for="ai-model">Model</label><div class="btns" style="flex-wrap:nowrap"><input id="ai-model" class="input" value="${esc(a.model)}"><button type="button" class="btn" data-a="ai-model-save">Save</button></div></div>
+        <div class="btns"><button type="button" class="btn" data-a="ai-replace">Replace key</button><button type="button" class="btn danger" data-a="ai-remove">Remove key</button></div>
+        <div id="ai-form" class="hidden" style="display:flex;flex-direction:column;gap:.6rem">${aiKeyForm()}</div>`;
+    }
+    return aiKeyForm();
+  }
+  function aiKeyForm() {
+    return `<div class="field"><label for="ai-key">Gemini API key</label><input id="ai-key" class="input" type="password" autocomplete="off" placeholder="AIza…"></div>
+      <button type="button" class="btn primary" data-a="ai-save">Save and check key</button>
+      <p class="hint" style="margin:0">Free key at aistudio.google.com › Get API key. On the free tier Google may use what you send to improve its products.</p>`;
   }
 
   /* ---------- trackers drawer ---------- */
@@ -851,9 +1081,15 @@
     UI.end = null;
     $('#page-host').innerHTML = '';
   }
-  function renderPage() {
+  function renderPage(force) {
     if (!pageName) return;
     const host = $('#page-host');
+    if (pageName === 'scan') {
+      const active = document.activeElement && host.contains(document.activeElement) && /INPUT|TEXTAREA/.test(document.activeElement.nodeName) || document.activeElement === $('#scan-ed');
+      if (active && host.innerHTML && !force) return;
+      host.innerHTML = renderScan();
+      return;
+    }
     if (pageName === 'settings') {
       const active = document.activeElement && host.contains(document.activeElement) && /INPUT|TEXTAREA/.test(document.activeElement.nodeName);
       if (active && host.innerHTML) return; // don't wipe what the player is typing
@@ -1064,6 +1300,7 @@
       <div class="field"><label for="nt-title">Name</label><input id="nt-title" class="input" maxlength="40" value="${esc(n.title)}"></div>
       <button type="button" class="btn primary" data-a="note-rename">Save name</button>
       <div class="btns"><button type="button" class="btn" data-a="note-move" data-d="left" ${i === 0 ? 'disabled' : ''}>Move left</button><button type="button" class="btn" data-a="note-move" data-d="right" ${i === S.notes.length - 1 ? 'disabled' : ''}>Move right</button></div>
+      ${n.scanned ? `<button type="button" class="btn" data-a="note-recap">${n.recap ? 'Write the recap again' : 'Make a recap (AI, in Dutch)'}</button>` : ''}
       <button type="button" class="btn danger" data-a="note-del">Delete this note</button>`);
   }
 
@@ -1108,6 +1345,8 @@
         <section class="sec"><div class="sec-h"><h2><label for="quotes">In-character lines${SHEET ? ` · ${esc(SHEET.name)}` : ''}</label></h2><span class="side">one per line</span></div>
           <textarea id="quotes" class="input" rows="5">${esc((st.quotes || []).join('\n'))}</textarea>
           <button type="button" class="btn" data-a="save-quotes">Save lines</button></section>
+        <section class="sec"><div class="sec-h"><h2>Reading journal pages</h2></div>
+          <div class="card" style="padding:.9rem;display:flex;flex-direction:column;gap:.7rem">${aiSettings()}</div></section>
         <section class="sec"><div class="sec-h"><h2>D&amp;D Beyond</h2></div>
           <div class="card" style="padding:.9rem;display:flex;flex-direction:column;gap:.7rem">
             ${SHEET ? `<button type="button" class="btn outline" data-a="load" data-label="Reload ${esc(SHEET.name)} from D&amp;D Beyond">Reload ${esc(SHEET.name)} from D&amp;D Beyond</button>
@@ -1220,6 +1459,126 @@
         return undefined;
       }
       case 'chars': return charsDialog();
+      case 'scan-open':
+        return openPage('scan');
+      case 'scan-remove':
+        SCAN.pages.splice(Number(d.i), 1);
+        return renderPage(true);
+      case 'scan-go': return scanGo();
+      case 'scan-save': return scanSave();
+      case 'scan-discard':
+        return openSheet('Throw this scan away?', 'The photos and the text are deleted', '<button type="button" class="btn danger" data-a="scan-discard-go">Throw away</button><button type="button" class="btn" data-a="sheet-close">Cancel</button>');
+      case 'scan-discard-go':
+        try {
+          await api('/api/scan/discard', {});
+          await refresh();
+          closeTop();
+          renderPage(true);
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+        return undefined;
+      case 'photo-view':
+        return openSheet('Page', '', `<img class="page-photo" src="${photoUrl(d.pid)}" alt="Journal page">`);
+      case 'note-view':
+        UI.notePhoto = d.v === 'photo' ? NOTE.id : null;
+        return render();
+      case 'note-recap': {
+        el.disabled = true;
+        el.textContent = 'Writing recap…';
+        try {
+          await api('/api/recap', { noteId: NOTE.id });
+          await refresh();
+          closeTop();
+        } catch (err) {
+          toast(err.message, 'error');
+          el.disabled = false;
+        }
+        return undefined;
+      }
+      case 'sugg-open': return suggestDialog(d.note);
+      case 'sugg-skip':
+        await act('suggest/apply', { noteId: d.note, accept: [] });
+        return closeTop();
+      case 'sugg-apply': {
+        const accept = $$('#sheet [data-sugg]').filter((row) => $('[data-sugg-on]', row).checked).map((row) => ({
+          section: row.dataset.section,
+          name: ($('[data-sugg-name]', row) || {}).value || 'Waar we gebleven zijn',
+          text: $('[data-sugg-text]', row).value,
+        }));
+        try {
+          const r = await act('suggest/apply', { noteId: d.note, accept });
+          closeTop();
+          toast(`Campaign summary: ${r.added} new, ${r.updated} updated`);
+        } catch (err) { /* toast shown */ }
+        return undefined;
+      }
+      case 'mark-ok':
+        try {
+          await act('mark/resolve', { noteId: d.note, index: Number(d.i), text: $('#mark-text').value, remember: $('#mark-remember').checked });
+          closeTop();
+        } catch (err) { /* toast shown */ }
+        return undefined;
+      case 'camp-tab':
+        UI.campTab = d.v;
+        return render();
+      case 'camp-words-save':
+        await act('campaign/set', { description: $('#camp-desc').value, words: $('#camp-words').value.split('\n') });
+        return toast('Saved');
+      case 'sum-edit': return summaryDialog(d.section, d.id || null);
+      case 'sum-save':
+        try {
+          await act('summary/save', { section: d.section, id: d.id || undefined, name: ($('#sum-name') || {}).value, text: $('#sum-text').value });
+          closeTop();
+        } catch (err) { /* toast shown */ }
+        return undefined;
+      case 'sum-del':
+        await act('summary/remove', { section: d.section, id: d.id });
+        return closeTop();
+      case 'party-edit': return partyDialog(d.id || null);
+      case 'party-save':
+        try {
+          await act('party/save', { id: d.id || undefined, name: $('#pt-name').value, cls: $('#pt-cls').value, player: $('#pt-player').value });
+          closeTop();
+        } catch (err) { /* toast shown */ }
+        return undefined;
+      case 'party-del':
+        await act('party/remove', { id: d.id });
+        return closeTop();
+      case 'ai-save': {
+        const v = $('#ai-key').value.trim();
+        if (!v) return toast('Paste the key first.');
+        el.disabled = true;
+        el.textContent = 'Checking…';
+        try {
+          const r = await api('/api/ai/key', { key: v });
+          await refresh();
+          host().innerHTML = renderSettings();
+          toast(`Key works. Using ${r.model}.`);
+        } catch (err) {
+          toast(err.message, 'error');
+          el.disabled = false;
+          el.textContent = 'Save and check key';
+        }
+        return undefined;
+      }
+      case 'ai-model-save':
+        try {
+          await api('/api/ai/key', { model: $('#ai-model').value.trim() });
+          await refresh();
+          toast('Model saved');
+        } catch (err) {
+          toast(err.message, 'error');
+        }
+        return undefined;
+      case 'ai-replace':
+        $('#ai-form').classList.remove('hidden');
+        return $('#ai-key').focus();
+      case 'ai-remove':
+        await api('/api/ai/key', { remove: true });
+        await refresh();
+        host().innerHTML = renderSettings();
+        return toast('Key removed');
       case 'char-switch':
         if (d.id === S.active) return closeTop();
         try {
@@ -1506,6 +1865,10 @@
     }
   });
   document.addEventListener('change', (e) => {
+    if (e.target.matches && e.target.matches('[data-scan-input]') && e.target.files && e.target.files.length) {
+      addScanFiles(e.target.files);
+      return;
+    }
     if (e.target.id === 'size') act('settings/set', { size: Number(e.target.value) });
   });
 
