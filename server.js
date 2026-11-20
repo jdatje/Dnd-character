@@ -307,8 +307,9 @@ async function saveAiKey(body) {
     await save();
     return { model: m };
   }
-  const key = String(body.key || '').trim();
-  if (!/^[A-Za-z0-9_\-]{20,200}$/.test(key)) throw new S.ActionError('That does not look like a Gemini API key (it usually starts with AIza).');
+  // Google has more than one key format (AIza…, AQ.…), so only weed out obvious paste mistakes; Google itself decides.
+  const key = String(body.key || '').trim().replace(/^["']|["']$/g, '').replace(/^(key=|GEMINI_API_KEY=)/i, '').trim();
+  if (!/^[\x21-\x7e]{20,300}$/.test(key)) throw new S.ActionError('That does not look like an API key: paste the whole key from Google AI Studio, without spaces.');
   const r = await ai.checkKey(key);
   aiAuth = { key, model: (aiAuth && aiAuth.model && r.models.includes(aiAuth.model)) ? aiAuth.model : r.suggested, savedAt: Date.now() };
   await writeJson(FILES.ai, aiAuth, 0o600);

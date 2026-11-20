@@ -892,7 +892,7 @@
     return aiKeyForm();
   }
   function aiKeyForm() {
-    return `<div class="field"><label for="ai-key">Gemini API key</label><input id="ai-key" class="input" type="password" autocomplete="off" placeholder="AIza…"></div>
+    return `<div class="field"><label for="ai-key">Gemini API key</label><input id="ai-key" class="input" type="password" autocomplete="off" placeholder="Paste your key"></div>
       <button type="button" class="btn primary" data-a="ai-save">Save and check key</button>
       <p class="hint" style="margin:0">Free key at aistudio.google.com › Get API key. On the free tier Google may use what you send to improve its products.</p>`;
   }

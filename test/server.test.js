@@ -260,6 +260,8 @@ test('journal scan: key, read pages, check words, campaign summary, recap, clean
 
   r = await call('/api/ai/key', { key: 'nope' });
   assert.equal(r.status, 400);
+  r = await call('/api/ai/key', { key: 'AQ.Ab8RN6WrongKey-0123456789abcdefghij' });
+  assert.equal(r.status, 502, 'new AQ. format passes the format check, Google refuses it');
   r = await call('/api/ai/key', { key: 'AIzaWrongKey_0123456789abcdefghij' });
   assert.equal(r.status, 502);
   assert.match(r.data.error, /did not accept the API key/);
